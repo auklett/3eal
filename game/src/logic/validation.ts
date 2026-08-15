@@ -1,4 +1,4 @@
-import type { Card } from '../types';
+import type { Card, CardShape } from '../types';
 
 export function validateSet(cards: Card[]): boolean {
   if (cards.length !== 3) return false;
@@ -38,7 +38,7 @@ function isSameNumber(cards: Card[]): boolean {
 }
 
 function isSameShape(cards: Card[]): boolean {
-  const shapes = cards.map(c => c.shape).filter((s): s is string => s !== undefined);
+  const shapes = cards.map(c => c.shape).filter((s): s is CardShape => s !== undefined);
 
   // TEAL can adopt any shape
   if (shapes.length === 0) return false;

@@ -12,7 +12,6 @@ export default function NormalCard({ card, onClick, isSelectable = false }: Norm
   const backgroundColor = `#${card.color}`;
 
   const renderShape = () => {
-    const shapeColor = backgroundColor;
     const numberColor = backgroundColor;
 
     switch (card.shape) {
