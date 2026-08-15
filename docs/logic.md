@@ -4,7 +4,7 @@
 
 ### 1.1 Card Schema
 ```typescript
-type CardColor = 'C0C0C0' | '008080' | 'C06060';
+type CardColor = 'C0C0FF' | '008080' | 'C06060';
 type CardShape = 'circle' | 'triangle' | 'square' | 'pentagon' | 'hexagon';
 type ActionType = 'CONCEAL' | 'STEAL' | 'REVEAL' | 'APPEAL' | 'TEAL';
 
@@ -69,9 +69,9 @@ interface RoomState {
 - **Total Deck Size:** **120 Cards**
 
 ### Normal Card Colors:
-- `C0C0C0` — Silver/Gray
+- `C0C0FF` — Periwinkle
 - `008080` — Teal (also used for TEAL wild cards)
-- `C06060` — Rose/Red
+- `C06060` — Rose
 
 ### Normal Card Numbers: 1–7
 

@@ -1,6 +1,6 @@
 import type { Card, CardColor, CardShape, ActionType } from '../types';
 
-const COLORS: CardColor[] = ['C0C0C0', '008080', 'C06060'];
+const COLORS: CardColor[] = ['C0C0FF', '008080', 'C06060'];
 const NUMBERS = [1, 2, 3, 4, 5, 6, 7];
 const SHAPES: CardShape[] = ['circle', 'triangle', 'square', 'pentagon', 'hexagon'];
 
