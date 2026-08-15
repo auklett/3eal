@@ -1,4 +1,4 @@
-export type CardColor = 'C0C0C0' | '008080' | 'C06060';
+export type CardColor = 'C0C0FF' | '008080' | 'C06060';
 export type CardShape = 'circle' | 'triangle' | 'square' | 'pentagon' | 'hexagon';
 export type ActionType = 'CONCEAL' | 'STEAL' | 'REVEAL' | 'APPEAL' | 'TEAL';
 

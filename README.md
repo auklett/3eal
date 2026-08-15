@@ -96,7 +96,7 @@ game/
 - **Background:** `#000000` (Pure Black)
 - **Text:** `#FFFFFF` (Pure White)
 - **Cards:** 80×112px (5:7 ratio), rounded corners (12px)
-- **Normal Card Colors:** `#C0C0C0` (Silver), `#008080` (Teal), `#C06060` (Rose)
+- **Normal Card Colors:** `#C0C0FF` (Periwinkle), `#008080` (Teal), `#C06060` (Rose)
 - **Action Cards:** White background (CONCEAL/STEAL/REVEAL/APPEAL), Teal (TEAL)
 
 ---

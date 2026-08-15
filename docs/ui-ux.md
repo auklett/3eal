@@ -14,7 +14,7 @@
 ## 2. Card Visual Layouts
 
 ### 2.1 Normal Cards
-* **Background Color:** Solid card color (`#C0C0C0`, `#008080`, or `#C06060`).
+* **Background Color:** Solid card color (`#C0C0FF`, `#008080`, or `#C06060`).
 * **Center Shape:** Drawn in `#000000` (Black) in the center of the card.
 * **Shape Number:** Rendered inside the shape using the **same color as the card background**.
 * **Revealed State:** Visible to all players when `isRevealed = true`.

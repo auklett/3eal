@@ -18,7 +18,7 @@ Be the first player to form **3 complete sets of 3 cards** (9 cards total matchi
 
 A set consists of 3 cards that satisfy **any one** of these 4 criteria:
 
-* **Same Color:** 3 cards of color `C0C0C0` (Silver), `008080` (Teal), or `C06060` (Rose)
+* **Same Color:** 3 cards of color `C0C0FF` (Periwinkle), `008080` (Teal), or `C06060` (Rose)
 * **Same Number:** 3 cards sharing the same digit (1 to 7)
 * **Same Shape:** 3 cards sharing the same shape (Circle, Triangle, Square, Pentagon, or Hexagon)
 * **Consecutive Numbers:** 3 cards with sequential digits (e.g., 1-2-3, 4-5-6)
