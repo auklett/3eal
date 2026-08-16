@@ -45,6 +45,7 @@ export default function GameBoard() {
 
   const [game, setGame] = useState<GameState | null>(null);
   const [selectedCard, setSelectedCard] = useState<string | null>(null);
+  const [selectedSlotIndex, setSelectedSlotIndex] = useState<number | null>(null);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [message, setMessage] = useState<string>('');
@@ -84,6 +85,7 @@ export default function GameBoard() {
       setGame(result.game);
       setPlayers({ ...players, [activePlayer.id]: result.player });
       setSelectedCard(null);
+      setSelectedSlotIndex(null);
 
       if (result.pendingAction) {
         setMessage('Action played! Waiting for opponent response (or auto-resolve in 10s)');
@@ -110,6 +112,8 @@ export default function GameBoard() {
   const handleDragStart = (slotIndex: number) => {
     if (!activePlayer.hand[slotIndex]) return;
     setDragIndex(slotIndex);
+    // Clear tap selection when drag starts
+    setSelectedSlotIndex(null);
   };
 
   const handleDragOverSlot = (slotIndex: number) => (e: React.DragEvent) => {
@@ -145,6 +149,43 @@ export default function GameBoard() {
   const handleDragEnd = () => {
     setDragIndex(null);
     setDragOverIndex(null);
+  };
+
+  // --- Tap-to-move: select a card, then tap another slot to move/swap (works at any time, like drag-and-drop) ---
+  const handleSlotClick = (slotIndex: number) => {
+    const card = activePlayer.hand[slotIndex];
+
+    // Click on empty slot
+    if (!card) {
+      // If a card is selected for moving, move it here
+      if (selectedSlotIndex !== null) {
+        const selectedCardToMove = activePlayer.hand[selectedSlotIndex];
+        if (selectedCardToMove) {
+          const newHand: (Card | null)[] = [...activePlayer.hand];
+          newHand[slotIndex] = selectedCardToMove;
+          newHand[selectedSlotIndex] = null;
+
+          setPlayers({
+            ...players,
+            [activePlayer.id]: { ...activePlayer, hand: newHand }
+          });
+          setMessage(`Moved card to slot ${slotIndex + 1}`);
+        }
+        setSelectedSlotIndex(null);
+      }
+      return;
+    }
+
+    // Click on a card
+    if (selectedSlotIndex === slotIndex) {
+      // Tap same card/slot to cancel selection
+      setSelectedSlotIndex(null);
+      setMessage('Selection cancelled');
+    } else {
+      // Select this card for moving
+      setSelectedSlotIndex(slotIndex);
+      setMessage(`Selected card in slot ${slotIndex + 1}. Tap another slot to move/swap.`);
+    }
   };
 
   const handleEndTurn = () => {
@@ -211,13 +252,21 @@ export default function GameBoard() {
                   draggable={true}
                   onDragStart={() => handleDragStart(index)}
                   onDragEnd={handleDragEnd}
-                  onClick={() => game.turnPhase === 'MAIN' && (setSelectedCard(card.id), setMessage(`Selected card. Click Play/Discard to play it.`))}
+                  onClick={() => handleSlotClick(index)}
                 >
                   <CardComponent
                     card={card}
                     isSelectable={game.turnPhase === 'MAIN'}
+                    isSelected={selectedSlotIndex === index}
+                    isDragging={dragIndex === index}
                   />
                 </div>
+              )}
+              {!card && (
+                <div
+                  onClick={() => handleSlotClick(index)}
+                  className="w-[80px] h-[112px]"
+                />
               )}
             </div>
           ))}

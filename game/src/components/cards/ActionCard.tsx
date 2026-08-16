@@ -31,9 +31,9 @@ export default function ActionCard({ card, onClick, isSelectable = false, isSele
         px-1.5 py-2
         transition-all
         ${isSelectable ? 'cursor-pointer hover:scale-105 hover:shadow-xl' : ''}
-        ${isGlowing ? `ring-4 ring-[${glowColor}]` : ''}
+        ${isGlowing ? 'ring-4' : ''}
       `}
-      style={{ backgroundColor, borderRadius: '8px' }}
+      style={{ backgroundColor, borderRadius: '8px', ...(isGlowing ? { boxShadow: `0 0 0 4px ${glowColor}` } : {}) }}
     >
       <div
         className="text-sm font-bold text-center mb-0.5 leading-tight"

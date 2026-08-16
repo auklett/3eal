@@ -135,9 +135,9 @@ export default function NormalCard({ card, onClick, isSelectable = false, isSele
         transition-all
         ${isSelectable ? 'cursor-pointer hover:scale-105 hover:shadow-xl' : ''}
         ${card.isRevealed ? 'ring-2 ring-yellow-400' : ''}
-        ${isGlowing ? `ring-4 ring-[${glowColor}]` : ''}
+        ${isGlowing ? 'ring-4' : ''}
       `}
-      style={{ backgroundColor, borderRadius: '8px' }}
+      style={{ backgroundColor, borderRadius: '8px', ...(isGlowing ? { boxShadow: `0 0 0 4px ${glowColor}` } : {}) }}
     >
       {renderShape()}
     </div>

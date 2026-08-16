@@ -25,7 +25,7 @@ A strategic card game where players race to form 3 sets of 3 matching cards. Bui
 | [`docs/rules.md`](docs/rules.md) | Official game rules: objective, setup, patterns, turn flow, action cards, deck composition, winning |
 | [`docs/tech-stack.md`](docs/tech-stack.md) | Technology stack, directory structure, available scripts, implementation files |
 | [`docs/ui-ux.md`](docs/ui-ux.md) | Design system, card layouts, screen views, interaction patterns, accessibility, implementation status |
-| [`docs/roadmap.md`](docs/roadmap.md) | Development phases, current progress, future milestones |
+| [`docs/roadmap.md`](docs/roadmap.md) | Development phases, current progress, future milestones (includes merged backlog) |
 
 ---
 
@@ -80,11 +80,19 @@ game/
 | Game state machine | ✅ |
 | Card UI components (5:7 ratio, 3×3 grid) | ✅ |
 | Single-player / manual turn switching | ✅ |
-| Card rearrangement (drag-and-drop + tap-to-move) | ✅ |
-| Card glow effect (selected/dragged) | ✅ |
+| Card rearrangement (drag-and-drop + tap-to-move, any time) | ✅ |
+| Card glow effect (selected/dragged, teal for white cards) | ✅ |
 | Hamburger menu (Rules, Players with card count breakdown) | ✅ |
+| Player card count display (Normal + Action breakdown) | ✅ |
+| Website favicon (3️⃣ emoji) | ✅ |
 | Action targeting UI (STEAL/REVEAL/CONCEAL) | 🚧 In Progress |
 | Set builder workspace | ❌ Not Started |
+
+**Implemented Features Detail:**
+- **Glow effect:** White for colored/TEAL cards; teal `#008080` for white/silver cards & white-background action cards
+- **Tap-to-move:** Select card (glow), tap slot to move/swap, tap same to cancel — available anytime
+- **Revealed cards:** Yellow ring indicator
+- **Players menu:** Shows actual card count with Normal/Action breakdown
 
 **Next Phases:**
 - **Phase 2:** Local multiplayer, appeal timer, AI opponent
@@ -99,6 +107,8 @@ game/
 - **Cards:** 80×112px (5:7 ratio), rounded corners (12px)
 - **Normal Card Colors:** `#C0C0FF` (Periwinkle), `#008080` (Teal), `#C06060` (Rose)
 - **Action Cards:** White background (CONCEAL/STEAL/REVEAL/APPEAL), Teal (TEAL)
+- **Selection Glow:** White glow for colored cards and TEAL; teal (#008080) glow for white/silver cards and white-background action cards; rendered with inline box-shadow so arbitrary colors display correctly
+- **Favicon:** 3️⃣ emoji
 
 ---
 
