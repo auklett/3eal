@@ -12,10 +12,20 @@
 - [✅] Implement local state machine (Draw phase, Main phase, Discard phase, Win validation)
 - [✅] Build UI card components based on 5:7 ratio (80px × 112px), `#000000` background, 3×3 grid layout with rounded corners
 - [✅] Add single-player vs. bot or manual turn switching on 1 device
-- [✅] Implement card rearrangement within hand (drag-and-drop + tap-to-move)
-- [✅] Add card glow effect (white border on select/drag, teal for white/silver cards)
+- [✅] Implement card rearrangement within hand (drag-and-drop + tap-to-move, both available at any time)
+- [✅] Add card glow effect (4px ring; white for colored/TEAL cards, teal for white/silver & white-background action cards)
 - [✅] Add hamburger menu with Rules and Players pages
 - [✅] Fix player card count display (shows actual cards with Normal/Action breakdown)
+- [✅] Set website favicon to the 3️⃣ emoji
+
+### Implemented Features Detail
+- **Glow effect on selected/dragged cards:** White border for colored cards; teal `#008080` glow for white/silver cards and white-background action cards
+- **Tap-to-move:** Tap card to select (glows), tap another slot to move/swap, tap same to cancel — works at any time (same availability as drag-and-drop)
+- **Drag-and-drop rearrangement** (existing)
+- **Fixed player card count display** in Players menu (Normal + Action)
+- **Action cards:** White-background action cards (CONCEAL/STEAL/REVEAL/APPEAL) show a teal glow when selected/dragged; TEAL cards show a white glow
+- **Revealed cards** show yellow ring indicator
+- **Website favicon** set to the 3️⃣ emoji
 
 ### Remaining for Phase 1
 - [ ] Complete action card targeting UI (STEAL/REVEAL/CONCEAL with card selection)

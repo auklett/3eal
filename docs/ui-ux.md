@@ -6,7 +6,7 @@
 * **Main Text Color:** `#FFFFFF` (Pure White)
 * **Card Aspect Ratio:** `5:7` (80px × 112px) with rounded corners (`border-radius: 12px` / `rounded-xl`)
 * **Hand Layout:** Cards displayed in a 3×3 grid (max 9 cards visible at once)
-* **Card Rearrangement:** Players can drag-and-drop cards to swap positions, OR tap a card to select then tap another slot to move/swap
+* **Card Rearrangement:** Players can drag-and-drop cards to swap positions, OR tap a card to select then tap another slot to move/swap. Both methods are available at any time (not restricted to a particular phase).
 * **Font:** System default sans-serif, clean and legible
 
 ---
@@ -30,7 +30,12 @@
 
 ### 2.3 Card States
 * **Selected:** Visual highlight (border glow, scale, or shadow) when clicked for rearrangement or targeting.
-  * Glow effect: 4px ring border. White glow for colored cards (Periwinkle, Teal, Rose). Teal glow (`#008080`) for white/silver cards (`#FFFFFF`, `#C0C0FF`).
+  * Glow effect: 4px ring border (implemented via inline box-shadow so arbitrary colors render correctly).
+  * Colored normal cards (Periwinkle, Teal, Rose): **white** glow.
+  * White/silver cards (`#FFFFFF`, `#C0C0FF`): **teal** (`#008080`) glow.
+  * White-background action cards (CONCEAL, STEAL, REVEAL, APPEAL): **teal** (`#008080`) glow.
+  * TEAL action card: **white** glow.
+  * Face-down cards: **white** glow when selected/dragged.
 * **Dragging:** Same glow effect (4px ring) applied during drag-and-drop.
 * **Revealed:** Yellow (`#FACC15`) 2px ring border indicator.
 * **Targetable:** Visual indication when a card can be targeted by an action.
@@ -79,7 +84,7 @@
 2. Tap another slot (empty or occupied) to move/swap the card there.
 3. Tap the same selected slot again to cancel the move.
 4. **Drag-and-Drop:** Drag a card and drop onto another slot to swap/move.
-5. Both methods work during player's own turn.
+5. Both methods work at any time (equivalent availability), allowing arrangement outside of a specific phase.
 
 ### 4.2 Action Card Targeting
 1. Play an action card (CONCEAL/STEAL/REVEAL) from hand.

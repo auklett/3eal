@@ -25,9 +25,9 @@ export default function CardComponent({ card, onClick, isSelectable = false, fac
           flex items-center justify-center
           transition-all
           ${isSelectable ? 'cursor-pointer hover:scale-105' : ''}
-          ${isGlowing ? 'ring-4 ring-white' : ''}
+          ${isGlowing ? 'ring-4' : ''}
         `}
-        style={{ backgroundColor: '#1a1a1a', borderRadius: '8px' }}
+        style={{ backgroundColor: '#1a1a1a', borderRadius: '8px', ...(isGlowing ? { boxShadow: '0 0 0 4px #FFFFFF' } : {}) }}
       >
         <div className="text-xl font-bold text-white opacity-20">3EAL</div>
       </div>
