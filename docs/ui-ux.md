@@ -6,7 +6,7 @@
 * **Main Text Color:** `#FFFFFF` (Pure White)
 * **Card Aspect Ratio:** `5:7` (80px × 112px) with rounded corners (`border-radius: 12px` / `rounded-xl`)
 * **Hand Layout:** Cards displayed in a 3×3 grid (max 9 cards visible at once)
-* **Card Rearrangement:** Players can click cards to select and swap positions within the grid
+* **Card Rearrangement:** Players can drag-and-drop cards to swap positions, OR tap a card to select then tap another slot to move/swap
 * **Font:** System default sans-serif, clean and legible
 
 ---
@@ -30,6 +30,9 @@
 
 ### 2.3 Card States
 * **Selected:** Visual highlight (border glow, scale, or shadow) when clicked for rearrangement or targeting.
+  * Glow effect: 4px ring border. White glow for colored cards (Periwinkle, Teal, Rose). Teal glow (`#008080`) for white/silver cards (`#FFFFFF`, `#C0C0FF`).
+* **Dragging:** Same glow effect (4px ring) applied during drag-and-drop.
+* **Revealed:** Yellow (`#FACC15`) 2px ring border indicator.
 * **Targetable:** Visual indication when a card can be targeted by an action.
 * **Disabled:** Dimmed/opacity reduced when not playable in current phase.
 
@@ -65,17 +68,18 @@
 
 ### 3.4 Hamburger Menu Pages (Overlay)
 * **Rules Page:** Full game rules recap (objective, valid patterns, turn flow, action cards) with X button to return to game.
-* **Players Page:** Summary list of all players showing name, card count, and host status, with X button to return.
+* **Players Page:** Summary list of all players showing name, total card count (with separate Normal and Action breakdown), and host status, with X button to return.
 
 ---
 
 ## 4. Interaction Patterns
 
 ### 4.1 Card Selection & Rearrangement
-1. Click a card in hand to select it (visual feedback).
-2. Click another card to swap positions.
-3. Click selected card again to deselect.
-4. Only works during player's own turn in MAIN phase.
+1. **Tap-to-Move:** Tap a card in hand to select it (glow highlight appears).
+2. Tap another slot (empty or occupied) to move/swap the card there.
+3. Tap the same selected slot again to cancel the move.
+4. **Drag-and-Drop:** Drag a card and drop onto another slot to swap/move.
+5. Both methods work during player's own turn.
 
 ### 4.2 Action Card Targeting
 1. Play an action card (CONCEAL/STEAL/REVEAL) from hand.
@@ -122,7 +126,8 @@
 |-----------|--------|
 | Card Components (Normal, Action, Slot) | ✅ Implemented |
 | Hand Grid Layout (3×3) | ✅ Implemented |
-| Card Rearrangement (Click to Swap) | ✅ Implemented |
+| Card Rearrangement (Drag-and-Drop + Tap-to-Move) | ✅ Implemented |
+| Card Glow Effect (Selected/Dragged) | ✅ Implemented |
 | Hamburger Menu (Rules, Players) | ✅ Implemented |
 | Game Board Layout | ✅ Implemented |
 | Draw Deck / Discard Pile UI | ✅ Implemented |

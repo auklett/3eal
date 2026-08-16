@@ -384,21 +384,31 @@ export default function HamburgerMenu({ players, onClose }: HamburgerMenuProps) 
               </div>
 
               <div className="space-y-4">
-                {players.map((player) => (
-                  <div
-                    key={player.id}
-                    style={{
-                      backgroundColor: 'rgba(255,255,255,0.06)',
-                      border: '1px solid rgba(255,255,255,0.4)',
-                    }}
-                    className="p-5 rounded-2xl"
-                  >
-                    <div className="flex justify-between items-center">
-                      <h3 className="text-2xl font-bold text-white">{player.name}</h3>
-                      <span className="text-lg text-white">{player.hand.length} cards</span>
+                {players.map((player) => {
+                  const normalCount = player.hand.filter((c) => c !== null && !c.isActionCard).length;
+                  const actionCount = player.hand.filter((c) => c !== null && c.isActionCard).length;
+                  const totalCount = normalCount + actionCount;
+                  return (
+                    <div
+                      key={player.id}
+                      style={{
+                        backgroundColor: 'rgba(255,255,255,0.06)',
+                        border: '1px solid rgba(255,255,255,0.4)',
+                      }}
+                      className="p-5 rounded-2xl"
+                    >
+                      <div className="flex justify-between items-center">
+                        <h3 className="text-2xl font-bold text-white">{player.name}</h3>
+                        <span className="text-lg text-white">{totalCount} cards</span>
+                      </div>
+                      <div className="flex gap-4 mt-2 text-sm" style={{ color: 'rgba(255,255,255,0.7)' }}>
+                        <span>Normal: {normalCount}</span>
+                        &emsp;
+                        <span>Action: {actionCount}</span>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
 
               <div className="flex justify-center mt-10">

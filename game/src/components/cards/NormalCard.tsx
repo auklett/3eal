@@ -4,12 +4,17 @@ interface NormalCardProps {
   card: Card;
   onClick?: () => void;
   isSelectable?: boolean;
+  isSelected?: boolean;
+  isDragging?: boolean;
 }
 
-export default function NormalCard({ card, onClick, isSelectable = false }: NormalCardProps) {
+export default function NormalCard({ card, onClick, isSelectable = false, isSelected = false, isDragging = false }: NormalCardProps) {
   if (card.isActionCard) return null;
 
+  const isGlowing = isSelected || isDragging;
   const backgroundColor = `#${card.color}`;
+  // White glow for colored cards, teal glow for white/silver cards
+  const glowColor = backgroundColor === '#FFFFFF' || backgroundColor === '#C0C0FF' ? '#008080' : '#FFFFFF';
 
   const renderShape = () => {
     const numberColor = backgroundColor;
@@ -42,7 +47,7 @@ export default function NormalCard({ card, onClick, isSelectable = false }: Norm
               <polygon points="50,10 90,90 10,90" fill="#000000" />
               <text
                 x="50"
-                y="65"
+                y="58"
                 dominantBaseline="central"
                 textAnchor="middle"
                 fill={numberColor}
@@ -82,7 +87,7 @@ export default function NormalCard({ card, onClick, isSelectable = false }: Norm
               <polygon points="50,10 90,40 75,85 25,85 10,40" fill="#000000" />
               <text
                 x="50"
-                y="54"
+                y="52"
                 dominantBaseline="central"
                 textAnchor="middle"
                 fill={numberColor}
@@ -130,6 +135,7 @@ export default function NormalCard({ card, onClick, isSelectable = false }: Norm
         transition-all
         ${isSelectable ? 'cursor-pointer hover:scale-105 hover:shadow-xl' : ''}
         ${card.isRevealed ? 'ring-2 ring-yellow-400' : ''}
+        ${isGlowing ? `ring-4 ring-[${glowColor}]` : ''}
       `}
       style={{ backgroundColor, borderRadius: '8px' }}
     >

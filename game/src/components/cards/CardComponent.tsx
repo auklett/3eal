@@ -7,9 +7,13 @@ interface CardComponentProps {
   onClick?: () => void;
   isSelectable?: boolean;
   faceDown?: boolean;
+  isSelected?: boolean;
+  isDragging?: boolean;
 }
 
-export default function CardComponent({ card, onClick, isSelectable = false, faceDown = false }: CardComponentProps) {
+export default function CardComponent({ card, onClick, isSelectable = false, faceDown = false, isSelected = false, isDragging = false }: CardComponentProps) {
+  const isGlowing = isSelected || isDragging;
+
   if (faceDown) {
     return (
       <div
@@ -21,6 +25,7 @@ export default function CardComponent({ card, onClick, isSelectable = false, fac
           flex items-center justify-center
           transition-all
           ${isSelectable ? 'cursor-pointer hover:scale-105' : ''}
+          ${isGlowing ? 'ring-4 ring-white' : ''}
         `}
         style={{ backgroundColor: '#1a1a1a', borderRadius: '8px' }}
       >
@@ -30,8 +35,8 @@ export default function CardComponent({ card, onClick, isSelectable = false, fac
   }
 
   if (card.isActionCard) {
-    return <ActionCard card={card} onClick={onClick} isSelectable={isSelectable} />;
+    return <ActionCard card={card} onClick={onClick} isSelectable={isSelectable} isSelected={isSelected} isDragging={isDragging} />;
   }
 
-  return <NormalCard card={card} onClick={onClick} isSelectable={isSelectable} />;
+  return <NormalCard card={card} onClick={onClick} isSelectable={isSelectable} isSelected={isSelected} isDragging={isDragging} />;
 }
