@@ -1,6 +1,6 @@
 # 3EAL — Development Roadmap
 
-## Current Progress: ~60% (Phase 1 Nearly Complete)
+## Current Progress: ~80% (Phase 1 Nearly Complete)
 
 ---
 
@@ -12,8 +12,10 @@
 - [✅] Implement local state machine (Draw phase, Main phase, Discard phase, Win validation)
 - [✅] Build UI card components based on 5:7 ratio (80px × 112px), `#000000` background, 3×3 grid layout with rounded corners
 - [✅] Add single-player vs. bot or manual turn switching on 1 device
-- [✅] Implement card rearrangement within hand (click to select and swap positions)
+- [✅] Implement card rearrangement within hand (drag-and-drop + tap-to-move)
+- [✅] Add card glow effect (white border on select/drag, teal for white/silver cards)
 - [✅] Add hamburger menu with Rules and Players pages
+- [✅] Fix player card count display (shows actual cards with Normal/Action breakdown)
 
 ### Remaining for Phase 1
 - [ ] Complete action card targeting UI (STEAL/REVEAL/CONCEAL with card selection)

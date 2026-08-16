@@ -12,7 +12,8 @@
       "Bash(curl -s -o /dev/null -w \"GameBoard: %{http_code}\\\\n\" \"http://localhost:5173/src/pages/GameBoard.tsx\")",
       "Bash(curl -s -o /dev/null -w \"gameEngine: %{http_code}\\\\n\" \"http://localhost:5173/src/logic/gameEngine.ts\")",
       "Bash(curl -s -o /dev/null -w \"types: %{http_code}\\\\n\" \"http://localhost:5173/src/types/index.ts\")",
-      "Bash(curl -s http://localhost:5173/)"
+      "Bash(curl -s http://localhost:5173/)",
+      "Bash(npx tsc *)"
     ]
   }
 }

@@ -71,7 +71,7 @@ game/
 
 ## 🎯 Current Status
 
-**Phase 1 (Local Single-Player): ~60% Complete**
+**Phase 1 (Local Single-Player): ~80% Complete**
 
 | Feature | Status |
 |---------|--------|
@@ -80,8 +80,9 @@ game/
 | Game state machine | ✅ |
 | Card UI components (5:7 ratio, 3×3 grid) | ✅ |
 | Single-player / manual turn switching | ✅ |
-| Card rearrangement (click to swap) | ✅ |
-| Hamburger menu (Rules, Players) | ✅ |
+| Card rearrangement (drag-and-drop + tap-to-move) | ✅ |
+| Card glow effect (selected/dragged) | ✅ |
+| Hamburger menu (Rules, Players with card count breakdown) | ✅ |
 | Action targeting UI (STEAL/REVEAL/CONCEAL) | 🚧 In Progress |
 | Set builder workspace | ❌ Not Started |
 
