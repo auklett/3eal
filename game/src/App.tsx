@@ -3,31 +3,13 @@ import GameBoard from './pages/GameBoard';
 import HomePage from './pages/HomePage';
 import LobbyPage from './pages/LobbyPage';
 import RulesOverlay from './components/game/RulesOverlay';
-import { createRoom, type RoomPlayer } from './lib/rooms';
+import { createRoom } from './lib/rooms';
 import './App.css';
 
 type Route =
   | { page: 'home' }
   | { page: 'lobby'; roomCode: string }
   | { page: 'game'; roomCode: string };
-
-function cachedRoomPlayers(): RoomPlayer[] {
-  try {
-    const saved = sessionStorage.getItem('3eal-room-players');
-    if (!saved) return [];
-    const value: unknown = JSON.parse(saved);
-    if (!Array.isArray(value)) return [];
-    return value.filter((player): player is RoomPlayer =>
-      typeof player === 'object' &&
-      player !== null &&
-      'id' in player && typeof player.id === 'string' &&
-      'name' in player && typeof player.name === 'string' &&
-      'joinedAt' in player && typeof player.joinedAt === 'number'
-    );
-  } catch {
-    return [];
-  }
-}
 
 function routeFromPath(path: string): Route {
   const match = path.match(/^\/(lobby|game)\/([A-Z0-9]{4,6})\/?$/i);
@@ -77,10 +59,6 @@ function App() {
       <GameBoard
         key={route.roomCode}
         roomCode={route.roomCode}
-        playerName={sessionStorage.getItem('3eal-player-name') ?? 'Player 1'}
-        playerId={sessionStorage.getItem('3eal-player-id') ?? undefined}
-        roomPlayers={cachedRoomPlayers()}
-        hostId={sessionStorage.getItem('3eal-room-host')}
       />
     );
   }

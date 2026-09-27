@@ -2,7 +2,7 @@
 
 ## Current Status
 
-The local game engine, game board, application views, and Firebase-backed live lobby are implemented. Gameplay state is still local to each browser: starting a room does not synchronize turns, cards, or actions between players. The hosted multiplayer MVP is therefore in progress, not complete.
+The game board, Firebase-backed live lobby, server-authoritative game API, and per-player sanitized game views are implemented and exercised against the local Firebase emulators. Production Firestore rules and Cloudflare Pages have not been deployed, and active-game player departure/host changes and automated test suites remain. The hosted multiplayer MVP is therefore in progress, not complete.
 
 ---
 
@@ -12,7 +12,7 @@ The local game engine, game board, application views, and Firebase-backed live l
 - [x] Generate and shuffle the 120-card deck: 105 Normal, 3 TEAL wild, and 12 Action cards (3 each of CONCEAL, STEAL, REVEAL, and APPEAL).
 - [x] Implement local Draw, Main, Interrupt, turn-end, and win-condition logic.
 - [x] Validate sets and find a partition of nine Table cards into three valid sets, including TEAL wild cards.
-- [x] Implement the 3×3 Table, visible Hand, card selection/rearrangement, card counts, and action targeting UI.
+- [x] Implement the 3×3 Table, visible Hand, card selection, card counts, and action targeting UI.
 - [x] Implement CONCEAL, STEAL, REVEAL, and APPEAL effects in the local game engine.
 - [x] Implement the 30-second APPEAL window and eligibility rules.
 - [x] Add revealed/selected card indicators, action feedback, and the Players/Rules in-game menu.
@@ -32,7 +32,7 @@ The local game engine, game board, application views, and Firebase-backed live l
 
 ### Current Boundary
 
-Lobby membership and room status are synchronized through Firestore. The Game Board initializes its own local deck and game state in each browser; gameplay changes are not shared with other players. Do not treat the current room start flow as synchronized multiplayer gameplay.
+Lobby metadata remains in `rooms/{roomCode}`. Game mutations pass through Cloudflare Pages Functions, which verify Firebase ID tokens and update a private authoritative state and sanitized per-player views in Firestore transactions. The browser can read its own view and cannot read/write the canonical deck, hands, or concealed identities. Refresh/reconnect resumes from the stored per-player view; mid-game departure, kicks, and host changes are not implemented.
 
 ---
 
@@ -40,16 +40,18 @@ Lobby membership and room status are synchronized through Firestore. The Game Bo
 
 ### Shared Game State
 
-- [ ] Persist authoritative game state for each room and synchronize active player, turn phase, deck, discard pile, Table, Hand, pending action, and winner across clients.
-- [ ] Enforce private information: opponents must not receive Action card hands or the identities/faces of Concealed cards unless rules reveal them.
-- [ ] Validate every move against the current room state and acting player's identity; prevent stale, duplicate, or out-of-turn actions.
-- [ ] Resolve concurrent APPEAL attempts atomically so only one valid appeal can cancel a pending action.
-- [ ] Enforce the 30-second interrupt deadline using trusted server-side timing rather than a client's clock.
-- [ ] Handle reconnects, browser refresh, player departure, and host changes during an active game.
+- [x] Persist authoritative game state for each room and synchronize active player, turn phase, deck count, discard pile, Table, private Hand, pending action, and winner through player-specific views.
+- [x] Enforce private information: opponents do not receive Action card hands or concealed card identities; Firestore rules deny direct access to private state and direct client writes.
+- [x] Validate moves against the authoritative room state, authenticated member, active player/phase, card ownership, action target, and server-side win partition.
+- [x] Resolve concurrent APPEAL attempts atomically so only one valid appeal can cancel a pending action.
+- [x] Enforce the 30-second interrupt deadline with server time and transactionally resolve expired actions.
+- [x] Resume the authoritative per-player view after browser refresh/reconnect.
+- [ ] Handle player departure, kicks, and host changes during an active game.
 
 ### Production Release
 
-- [ ] Define and test production Firestore security rules; do not rely on permissive emulator rules.
+- [x] Define strict client Firestore rules and exercise member/view isolation and client-write denial against the local emulator.
+- [ ] Deploy the reviewed Firestore rules to production before enabling production gameplay.
 - [ ] Configure production Firebase authentication and project settings.
 - [ ] Deploy the application to Cloudflare Pages.
 - [ ] Add a GitHub CI/CD workflow for type checking, linting, and deployment.

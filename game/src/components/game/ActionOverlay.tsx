@@ -36,7 +36,9 @@ export default function ActionOverlay({ actionType, sourcePlayer, players, onCon
         }
         const enabled = actionType === 'CONCEAL'
           ? card.isRevealed
-          : actionType === 'STEAL' || !card.isRevealed;
+          : actionType === 'STEAL'
+            ? card.category === 'NORMAL'
+            : !card.isRevealed;
         const visibleFace = isSelfTarget || card.isRevealed;
 
         return (

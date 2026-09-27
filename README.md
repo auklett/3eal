@@ -2,7 +2,7 @@
 
 3EAL is a strategic card game about collecting and protecting sets. Build three valid sets of three cards before your opponents, while using action cards to disrupt their plans.
 
-The application includes a polished Home screen, a Firebase-backed live Lobby, an interactive Game Board, and shared Rules overlays. **The lobby is synchronized across browsers; gameplay is currently local to each browser and is not synchronized between players.**
+The application includes a polished Home screen, a Firebase-backed live Lobby, an interactive Game Board, and shared Rules overlays. Lobby and authoritative gameplay state synchronize across browsers through Firebase and Cloudflare Pages Functions.
 
 ## Game overview
 
@@ -22,15 +22,17 @@ For the complete rules and card details, see [`docs/rules.md`](docs/rules.md).
 
 - Local game engine for drawing, action resolution, turn flow, and win checks
 - Set validation and partition search, including TEAL wild cards
-- Game Board with Table and Hand, card selection/rearrangement, action targeting, and player/rules menus
+- Game Board with Table and Hand, card selection, server-validated action targeting, and player/rules menus
 - Home screen with room-code entry, room creation, and Rules access
 - Live Firebase Lobby with room creation/joining, roster updates, player and room renaming, host kick, leave, host handoff, and host start
 - Firebase anonymous authentication for lobby player identity
-- Local Firebase Auth and Firestore emulator configuration for development
+- Server-authoritative game state and mutation API hosted in Cloudflare Pages Functions
+- Per-player sanitized Firestore game views; the canonical deck, hands, and concealed card identities are server-only
+- Client-denying Firestore rules configured and exercised in the local emulator
 
 ### Not yet implemented
 
-Game state is not shared across browsers. Each browser initializes and updates its own deck, hands, tables, turns, and actions after entering the Game Board. Production Firestore security rules, authoritative server-side gameplay and appeal timing, hosting, and automated tests also remain to be completed. See [`docs/roadmap.md`](docs/roadmap.md).
+Production Firestore rules have **not** been deployed, and the Cloudflare Pages site has **not** been deployed. Configure the Pages service-account secret before enabling the API in production. Automated test suites and active-game player departure/host-change handling also remain. See [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Quick start
 
@@ -54,7 +56,7 @@ VITE_FIREBASE_APP_ID=your-app-id
 
 Do not commit `.env.local`. The emulator configuration is in [`game/firebase.json`](game/firebase.json).
 
-### Start the app
+### Start the full local app
 
 In one terminal:
 
@@ -64,14 +66,15 @@ npm install
 npx firebase-tools emulators:start --only auth,firestore
 ```
 
-In a second terminal:
+In a second terminal, configure the Pages emulator bindings once and run the local Pages Functions runtime:
 
 ```bash
 cd game
-npm run dev
+cp .dev.vars.example .dev.vars
+npm run pages:dev
 ```
 
-Open **http://localhost:5173**. The Firebase Emulator UI is enabled by the local emulator configuration.
+Provide the public Firebase web-app values in the ignored `game/.env.local` file above. Open the Pages dev URL printed by Wrangler (normally **http://localhost:8788**). `npm run dev` runs Vite alone and does not serve the Pages API.
 
 ### Available scripts
 
@@ -82,6 +85,7 @@ Run these from `game/`:
 | `npm run dev` | Start the Vite development server |
 | `npm run build` | Run TypeScript project builds and create a production bundle |
 | `npm run preview` | Preview the production build locally |
+| `npm run pages:dev` | Build the emulator-configured frontend and serve Pages Functions locally |
 | `npm run lint` | Run OxLint |
 
 ## Project structure
@@ -92,13 +96,16 @@ game/
 │   ├── components/
 │   │   ├── cards/       # Normal, Action, and shared card UI
 │   │   └── game/        # Game menus, action targeting, and rules overlay
-│   ├── lib/             # Firebase initialization and room/lobby operations
-│   ├── logic/           # Deck generation, validation, and local game engine
+│   ├── lib/             # Firebase initialization and room/game API subscriptions
+│   ├── logic/           # Deck generation, validation, and authoritative game rules
 │   ├── pages/           # Home, Lobby, and Game Board views
 │   ├── types/           # Game and card TypeScript types
 │   ├── App.tsx          # Navigation and view composition
 │   └── index.css        # Tailwind CSS import and global styles
-├── firebase.json        # Local Firebase Emulator Suite configuration
+├── functions/           # Cloudflare Pages Functions mutation API
+├── firestore.rules      # Client read/write access control
+├── firebase.json        # Firestore rules and local emulator configuration
+├── wrangler.toml        # Cloudflare Pages build/runtime configuration
 └── package.json         # Dependencies and npm scripts
 
 docs/
@@ -116,7 +123,7 @@ docs/
 | UI | React 19, TypeScript 6 |
 | Build/development | Vite 8 |
 | Styling | Tailwind CSS 4 |
-| Lobby backend | Firebase Authentication and Cloud Firestore |
+| Backend | Cloudflare Pages Functions, Firebase Authentication, and Cloud Firestore |
 | Local checks | OxLint and TypeScript build |
 
 See [`docs/tech-stack.md`](docs/tech-stack.md) for architecture details.

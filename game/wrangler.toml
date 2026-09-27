@@ -1,0 +1,6 @@
+name = "3eal"
+pages_build_output_dir = "./dist"
+compatibility_date = "2026-09-27"
+
+[vars]
+FIREBASE_PROJECT_ID = "eal-5d762"

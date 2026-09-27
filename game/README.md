@@ -1,32 +1,13 @@
-# React + TypeScript + Vite
+# 3EAL
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+## Local gameplay
 
-Currently, two official plugins are available:
+Install dependencies with `npm ci`. For the complete Pages Functions path, run the Firebase Auth and Firestore emulators on ports 9099 and 8080, copy `.dev.vars.example` to `.dev.vars`, provide the usual Firebase web config in the ignored `.env.local`, then run `npm run pages:dev`. The Pages dev build connects the browser and trusted API to the emulators; `npm run dev` runs only the Vite frontend.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Cloudflare Pages configuration
 
-## React Compiler
+Build output is `dist`; Pages Functions are in `functions/`. Configure the existing public `VITE_FIREBASE_*` web settings and `FIREBASE_PROJECT_ID` as Pages build/runtime variables. Add `FIREBASE_SERVICE_ACCOUNT` as a **secret** binding containing the JSON for a dedicated service account with only the Firestore data-access role (`roles/datastore.user`). Never put this credential in source, a `VITE_*` variable, or a Pages build variable. Firebase ID tokens are verified against Google's public signing certificates.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+The browser can read a room's lobby metadata and only its own sanitized `rooms/{roomCode}/views/{uid}` document. The authoritative deck, all hands, and concealed card identities live in `rooms/{roomCode}/private/state`; client rules deny access and deny every client write. The API uses Firestore REST transactions for game and lobby mutations.
 
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
-```
-
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+`firestore.rules` is wired into `firebase.json` for emulator testing. Production rules and Cloudflare Pages are not deployed by this project configuration.
