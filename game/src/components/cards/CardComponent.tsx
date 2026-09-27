@@ -25,18 +25,34 @@ export default function CardComponent({ card, onClick, isSelectable = false, fac
           flex items-center justify-center
           transition-all
           ${isSelectable ? 'cursor-pointer hover:scale-105' : ''}
-          ${isGlowing ? 'ring-4' : ''}
         `}
-        style={{ backgroundColor: '#1a1a1a', borderRadius: '8px', ...(isGlowing ? { boxShadow: '0 0 0 4px #FFFFFF' } : {}) }}
+        aria-label="Concealed card"
+        style={{ backgroundColor: '#1a1a1a', borderRadius: '12px', border: '1px solid #777777', ...(isGlowing ? { boxShadow: '0 0 0 4px #FFFFFF' } : {}) }}
       >
         <div className="text-xl font-bold text-white opacity-20">3EAL</div>
       </div>
     );
   }
 
-  if (card.isActionCard) {
-    return <ActionCard card={card} onClick={onClick} isSelectable={isSelectable} isSelected={isSelected} isDragging={isDragging} />;
-  }
+  const content = card.category === 'ACTION'
+    ? <ActionCard card={card} onClick={onClick} isSelectable={isSelectable} isSelected={isSelected} isDragging={isDragging} />
+    : <NormalCard card={card} onClick={onClick} isSelectable={isSelectable} isSelected={isSelected} isDragging={isDragging} />;
 
-  return <NormalCard card={card} onClick={onClick} isSelectable={isSelectable} isSelected={isSelected} isDragging={isDragging} />;
+  if (!card.isRevealed || card.category === 'ACTION') return content;
+  return (
+    <div className="relative" aria-label="Revealed to all players">
+      {content}
+      <span
+        className="absolute right-1 top-1 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-yellow-300 text-xs text-black"
+        role="img"
+        aria-label="Revealed to all players"
+        title="Revealed to all players"
+      >
+        <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" aria-hidden="true">
+          <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z" fill="none" stroke="currentColor" strokeWidth="2" />
+          <circle cx="12" cy="12" r="2.5" fill="currentColor" />
+        </svg>
+      </span>
+    </div>
+  );
 }

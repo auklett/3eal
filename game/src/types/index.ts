@@ -1,10 +1,11 @@
 export type CardColor = 'C0C0FF' | '008080' | 'C06060';
 export type CardShape = 'circle' | 'triangle' | 'square' | 'pentagon' | 'hexagon';
-export type ActionType = 'CONCEAL' | 'STEAL' | 'REVEAL' | 'APPEAL' | 'TEAL';
+export type ActionType = 'CONCEAL' | 'STEAL' | 'REVEAL' | 'APPEAL';
+export type CardCategory = 'NORMAL' | 'WILD' | 'ACTION';
 
 export type Card = {
   id: string;
-  isActionCard: boolean;
+  category: CardCategory;
   isRevealed: boolean;
 
   color?: CardColor;
@@ -14,28 +15,30 @@ export type Card = {
   actionType?: ActionType;
   title?: string;
   description?: string;
-}
+};
 
 export type Player = {
   id: string;
   name: string;
   isHost: boolean;
-  // Fixed 9-slot grid; null entries are empty slots so cards can occupy any
-  // position while leaving gaps (e.g. a card in slot 9 with slots 1-3 filled).
-  hand: (Card | null)[];
+  table: Card[];
+  hand: Card[];
   sets: Card[][];
-}
+};
 
-export type TurnPhase = 'DRAW' | 'MAIN' | 'DISCARD' | 'INTERRUPT';
+export type TurnPhase = 'DRAW' | 'MAIN' | 'INTERRUPT';
 export type RoomStatus = 'LOBBY' | 'IN_GAME' | 'FINISHED';
 
 export type PendingAction = {
   sourcePlayerId: string;
   targetPlayerId: string;
   actionCard: Card;
-  targetCardId?: string;
-  canAppealUntil: number;
-}
+  actionType: Exclude<ActionType, 'APPEAL'>;
+  targetCardId: string;
+  wasBlindTarget: boolean;
+  appealWindowEndsAt: number;
+  resolvedByPlayerId?: string;
+};
 
 export type GameState = {
   deck: Card[];
@@ -44,7 +47,7 @@ export type GameState = {
   turnPhase: TurnPhase;
   pendingAction?: PendingAction;
   winnerId: string | null;
-}
+};
 
 export type RoomState = {
   roomCode: string;
@@ -52,4 +55,4 @@ export type RoomState = {
   players: Record<string, Player>;
   hostId: string;
   game?: GameState;
-}
+};

@@ -1,7 +1,10 @@
 import { useState } from 'react';
+import type { Player } from '../../types';
+import { completeSetCount } from '../../logic/validation';
+import RulesOverlay from './RulesOverlay';
 
 interface HamburgerMenuProps {
-  players: Array<{ id: string; name: string; hand: any[] }>;
+  players: Array<Pick<Player, 'id' | 'name' | 'hand' | 'table' | 'isHost'>>;
   onClose?: () => void;
 }
 
@@ -11,14 +14,12 @@ export default function HamburgerMenu({ players, onClose }: HamburgerMenuProps) 
   const [showPlayers, setShowPlayers] = useState(false);
 
   // The hamburger/X button is now context-aware:
-  // - On a sub-page (Rules/Players) -> goes back to the menu drawer
+  // - On a sub-page (Rules/Players) -> closes the overlay and returns to the game
   // - On the menu drawer -> closes everything
   // - Closed -> opens the menu drawer
   const handleToggle = () => {
     if (showRules || showPlayers) {
-      setShowRules(false);
-      setShowPlayers(false);
-      setIsOpen(true);
+      handleCloseAll();
       return;
     }
     setIsOpen((s) => {
@@ -35,13 +36,6 @@ export default function HamburgerMenu({ players, onClose }: HamburgerMenuProps) 
     setShowRules(false);
     setShowPlayers(false);
     onClose?.();
-  };
-
-  // From a sub-page, go back to the menu drawer (not a full close).
-  const handleBackToMenu = () => {
-    setShowRules(false);
-    setShowPlayers(false);
-    setIsOpen(true);
   };
 
   const handleShowRules = () => {
@@ -214,129 +208,12 @@ export default function HamburgerMenu({ players, onClose }: HamburgerMenuProps) 
         </>
       )}
 
-      {/* Rules Page - fully opaque, scrollable, connects back to the menu */}
-      {showRules && (
-        <div
-          onClick={handleBackToMenu}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 200,
-            backgroundColor: '#000000',
-            overflowY: 'auto',
-            WebkitOverflowScrolling: 'touch',
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              maxWidth: '768px',
-              margin: '0 auto',
-              padding: '80px 24px 64px',
-            }}
-          >
-            <div
-              style={{
-                backgroundColor: 'rgba(255,255,255,0.06)',
-                backdropFilter: 'blur(16px)',
-                WebkitBackdropFilter: 'blur(16px)',
-                border: '1px solid #FFFFFF',
-                borderRadius: '24px',
-                padding: '32px',
-              }}
-            >
-              <div className="flex justify-between items-center mb-6">
-                <h2 className="text-4xl font-bold text-white">Game Rules</h2>
-                <button
-                  onClick={handleBackToMenu}
-                  style={{
-                    color: '#FFFFFF',
-                    border: '2px solid #FFFFFF',
-                    borderRadius: '12px',
-                    padding: '8px 16px',
-                    backgroundColor: 'transparent',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  ← Back to Menu
-                </button>
-              </div>
+      {showRules && <RulesOverlay onClose={handleCloseAll} />}
 
-              <div className="space-y-8 text-white">
-                <section>
-                  <h3 className="text-2xl font-bold text-white mb-4 border-b border-white/40 pb-2">Objective</h3>
-                  <p className="text-lg leading-relaxed text-white">Be the first player to form 3 complete sets of 3 cards (9 cards total) to win.</p>
-                </section>
-
-                <section>
-                  <h3 className="text-2xl font-bold text-white mb-4 border-b border-white/40 pb-2">Valid Set Patterns</h3>
-                  <p className="mb-4 text-lg text-white">A set of 3 cards is valid if it meets any one of these criteria:</p>
-                  <ul className="list-disc list-inside space-y-3 ml-4 text-lg text-white">
-                    <li><strong className="text-white">Same Color:</strong> All 3 cards share the same color (Silver, Teal, or Rose)</li>
-                    <li><strong className="text-white">Same Number:</strong> All 3 cards share the same number (1–7)</li>
-                    <li><strong className="text-white">Same Shape:</strong> All 3 cards share the same shape (Circle, Triangle, Square, Pentagon, Hexagon)</li>
-                    <li><strong className="text-white">Consecutive Numbers:</strong> Cards form a sequence (e.g., 2–3–4, 5–6–7)</li>
-                  </ul>
-                </section>
-
-                <section>
-                  <h3 className="text-2xl font-bold text-white mb-4 border-b border-white/40 pb-2">Turn Flow</h3>
-                  <ol className="list-decimal list-inside space-y-4 ml-4 text-lg text-white">
-                    <li><strong className="text-white">Draw Phase:</strong> Draw 1 card from the deck. If empty, discard pile is reshuffled.</li>
-                    <li><strong className="text-white">Main Phase:</strong> Play any number of action cards (CONCEAL, STEAL, REVEAL, TEAL) or discard normal cards. Targeted actions trigger an interrupt window.</li>
-                    <li><strong className="text-white">Interrupt Phase:</strong> When targeted, opponent has 10 seconds to play APPEAL to block the action.</li>
-                    <li><strong className="text-white">End Phase:</strong> Discard down to 9 cards max. Check win condition (3 valid sets = victory).</li>
-                  </ol>
-                </section>
-
-                <section>
-                  <h3 className="text-2xl font-bold text-white mb-4 border-b border-white/40 pb-2">Action Cards</h3>
-                  <ul className="space-y-3 text-lg text-white">
-                    <li><strong className="text-white">CONCEAL:</strong> Hide one of your own revealed cards from opponents. Can be appealed.</li>
-                    <li><strong className="text-white">STEAL:</strong> Take a normal card (including TEAL) from an opponent's hand. Cannot target action cards or completed sets. Can be appealed.</li>
-                    <li><strong className="text-white">REVEAL:</strong> Force an opponent to reveal a card from their hand to all players. Can be appealed.</li>
-                    <li><strong className="text-white">APPEAL:</strong> Play during an interrupt window to block an opponent's CONCEAL, STEAL, or REVEAL. Both cards are discarded.</li>
-                    <li><strong className="text-white">TEAL:</strong> Wild card with fixed Teal color (#008080) but flexible shape and number. Counts as a normal card for targeting purposes.</li>
-                  </ul>
-                </section>
-
-                <section>
-                  <h3 className="text-2xl font-bold text-white mb-4 border-b border-white/40 pb-2">Deck Composition</h3>
-                  <ul className="list-disc list-inside space-y-2 ml-4 text-lg text-white">
-                    <li><strong className="text-white">105 Normal Cards:</strong> 3 colors × 7 numbers × 5 shapes</li>
-                    <li><strong className="text-white">15 Action Cards:</strong> 3 copies each of CONCEAL, STEAL, REVEAL, APPEAL, TEAL</li>
-                    <li><strong className="text-white">Total:</strong> 120 cards</li>
-                  </ul>
-                </section>
-              </div>
-
-              <div className="flex justify-center mt-10">
-                <button
-                  onClick={handleBackToMenu}
-                  style={{
-                    color: '#000000',
-                    backgroundColor: '#FFFFFF',
-                    borderRadius: '12px',
-                    padding: '10px 24px',
-                    fontWeight: 600,
-                    border: '2px solid #FFFFFF',
-                    cursor: 'pointer',
-                  }}
-                >
-                  ← Back to Menu
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Players Page - fully opaque, scrollable, connects back to the menu */}
+      {/* Players Page */}
       {showPlayers && (
         <div
-          onClick={handleBackToMenu}
+          onClick={handleCloseAll}
           style={{
             position: 'fixed',
             inset: 0,
@@ -367,27 +244,27 @@ export default function HamburgerMenu({ players, onClose }: HamburgerMenuProps) 
               <div className="flex justify-between items-center mb-6">
                 <h2 className="text-4xl font-bold text-white">Players</h2>
                 <button
-                  onClick={handleBackToMenu}
+                  onClick={handleCloseAll}
+                  aria-label="Close players"
                   style={{
                     color: '#FFFFFF',
                     border: '2px solid #FFFFFF',
-                    borderRadius: '12px',
-                    padding: '8px 16px',
+                    borderRadius: '999px',
+                    width: '44px',
+                    height: '44px',
                     backgroundColor: 'transparent',
-                    fontWeight: 600,
                     cursor: 'pointer',
-                    whiteSpace: 'nowrap',
+                    fontSize: '24px',
                   }}
                 >
-                  ← Back to Menu
+                  ×
                 </button>
               </div>
 
               <div className="space-y-4">
                 {players.map((player) => {
-                  const normalCount = player.hand.filter((c) => c !== null && !c.isActionCard).length;
-                  const actionCount = player.hand.filter((c) => c !== null && c.isActionCard).length;
-                  const totalCount = normalCount + actionCount;
+                  const tableCount = player.table.filter((c) => c !== null).length;
+                  const handCount = player.hand.filter((c) => c !== null).length;
                   return (
                     <div
                       key={player.id}
@@ -398,14 +275,14 @@ export default function HamburgerMenu({ players, onClose }: HamburgerMenuProps) 
                       className="p-5 rounded-2xl"
                     >
                       <div className="flex justify-between items-center">
-                        <h3 className="text-2xl font-bold text-white">{player.name}</h3>
-                        <span className="text-lg text-white">{totalCount} cards</span>
+                        <h3 className="text-2xl font-bold text-white">
+                          {player.name}{player.isHost ? ' · Host' : ''}
+                        </h3>
+                        <span className="text-lg text-white">Table {tableCount} | Hand {handCount}</span>
                       </div>
-                      <div className="flex gap-4 mt-2 text-sm" style={{ color: 'rgba(255,255,255,0.7)' }}>
-                        <span>Normal: {normalCount}</span>
-                        &emsp;
-                        <span>Action: {actionCount}</span>
-                      </div>
+                      <p className="mt-2 text-sm text-white/70">
+                        Completed sets: {completeSetCount(player.table)}/3
+                      </p>
                     </div>
                   );
                 })}
@@ -413,7 +290,7 @@ export default function HamburgerMenu({ players, onClose }: HamburgerMenuProps) 
 
               <div className="flex justify-center mt-10">
                 <button
-                  onClick={handleBackToMenu}
+                  onClick={handleCloseAll}
                   style={{
                     color: '#000000',
                     backgroundColor: '#FFFFFF',
@@ -424,7 +301,7 @@ export default function HamburgerMenu({ players, onClose }: HamburgerMenuProps) 
                     cursor: 'pointer',
                   }}
                 >
-                  ← Back to Menu
+                  Close
                 </button>
               </div>
             </div>
