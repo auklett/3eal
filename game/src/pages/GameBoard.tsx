@@ -1,16 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
-import type { ActionType, Card, GameState, Player } from '../types';
-import {
-  drawCard,
-  eligibleAppealPlayers,
-  endTurn,
-  initializeGame,
-  playAppeal,
-  playCard,
-  resolveAction
-} from '../logic/gameEngine';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { ActionType, Card, Player } from '../types';
 import { completeSetCount } from '../logic/validation';
-import type { RoomPlayer } from '../lib/rooms';
+import {
+  ensurePlayerId,
+  sendGameCommand,
+  subscribeToPlayerView,
+  type PlayerGameView
+} from '../lib/rooms';
 import CardComponent from '../components/cards/CardComponent';
 import HamburgerMenu from '../components/game/HamburgerMenu';
 import ActionOverlay from '../components/game/ActionOverlay';
@@ -33,275 +29,153 @@ const disabledButtonStyle: React.CSSProperties = {
   cursor: 'not-allowed'
 };
 
-function arrangeCards(cards: Card[], from: number, to: number): Card[] {
-  const next = [...cards];
-  [next[from], next[to]] = [next[to], next[from]];
-  return next;
-}
-
 interface GameBoardProps {
   roomCode: string;
-  playerName: string;
-  playerId?: string;
-  roomPlayers: RoomPlayer[];
-  hostId: string | null;
 }
 
-export default function GameBoard({ roomCode, playerName, playerId, roomPlayers, hostId }: GameBoardProps) {
-  const [initialGame] = useState(() => {
-    const lobbyPlayers = roomPlayers.length > 0
-      ? roomPlayers
-      : [
-        { id: playerId ?? 'player1', name: playerName, joinedAt: 0 },
-        { id: 'player2', name: 'Player 2', joinedAt: 1 }
-      ];
-    const initialPlayers: Record<string, Player> = Object.fromEntries(
-      lobbyPlayers.map((player) => [
-        player.id,
-        {
-          id: player.id,
-          name: player.name,
-          isHost: player.id === hostId,
-          table: [],
-          hand: [],
-          sets: []
-        }
-      ])
-    );
-    const initialState = initializeGame(Object.values(initialPlayers));
-    return {
-      players: Object.fromEntries(Object.values(initialPlayers).map((player) => [player.id, player])),
-      game: initialState
-    };
-  });
-  const [players, setPlayers] = useState<Record<string, Player>>(initialGame.players);
-  const [game, setGame] = useState<GameState | null>(initialGame.game);
+export default function GameBoard({ roomCode }: GameBoardProps) {
+  const [view, setView] = useState<PlayerGameView | null>(null);
   const [selection, setSelection] = useState<{ zone: Zone; cardId: string } | null>(null);
   const [pendingActionType, setPendingActionType] = useState<Exclude<ActionType, 'APPEAL'> | null>(null);
-  const [message, setMessage] = useState(`${initialGame.players[initialGame.game.activePlayerId].name}'s turn — draw a card`);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
   const [appealDismissed, setAppealDismissed] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(30);
-  const [draggedCard, setDraggedCard] = useState<{ zone: Zone; cardId: string } | null>(null);
+  const pendingResolution = useRef('');
+  const nextResolutionAttempt = useRef(0);
 
-  const pendingAction = game?.pendingAction;
-  const appealPlayers = useMemo(
-    () => pendingAction ? eligibleAppealPlayers(pendingAction, players) : [],
-    [pendingAction, players]
-  );
+  useEffect(() => {
+    let mounted = true;
+    let unsubscribe: (() => void) | undefined;
+    void ensurePlayerId().then((id) => {
+      if (!mounted) return;
+      return subscribeToPlayerView(
+        roomCode,
+        id,
+        (nextView) => {
+          if (!mounted) return;
+          setView(nextView);
+          if (nextView?.pendingAction) setAppealDismissed(false);
+          if (!nextView) setError('Your private game view is not available. Return to the lobby and ask the host to start the game.');
+        },
+        (subscriptionError) => {
+          if (mounted) setError(subscriptionError.message);
+        }
+      ).then((stop) => {
+        if (mounted) unsubscribe = stop;
+        else stop();
+      });
+    }).catch((connectionError: unknown) => {
+      if (mounted) setError(connectionError instanceof Error ? connectionError.message : 'Unable to connect to the game.');
+    });
+    return () => {
+      mounted = false;
+      unsubscribe?.();
+    };
+  }, [roomCode]);
 
+  const send = useCallback(async (
+    action: 'draw' | 'play' | 'appeal' | 'discard' | 'endTurn' | 'resolve',
+    payload: Record<string, unknown> = {}
+  ) => {
+    setError('');
+    try {
+      await sendGameCommand(roomCode, action, payload);
+      setMessage(action === 'resolve' ? 'Interrupt expired. Action resolved.' : 'Move accepted.');
+      return true;
+    } catch (commandError) {
+      setError(commandError instanceof Error ? commandError.message : 'The move could not be completed.');
+      return false;
+    }
+  }, [roomCode]);
+
+  const pendingAction = view?.pendingAction;
   useEffect(() => {
     if (!pendingAction) {
       setSecondsLeft(30);
-      setAppealDismissed(false);
+      pendingResolution.current = '';
+      nextResolutionAttempt.current = 0;
       return;
     }
-
+    const resolutionKey = `${pendingAction.actionType}:${pendingAction.sourcePlayerId}:${pendingAction.appealWindowEndsAt}`;
     const updateTimer = () => {
       const remaining = Math.max(0, Math.ceil((pendingAction.appealWindowEndsAt - Date.now()) / 1000));
       setSecondsLeft(remaining);
-      if (remaining === 0 && game) {
-        const resolved = resolveAction(game, players);
-        setGame({ ...resolved.game });
-        setPlayers({ ...resolved.players });
-        setMessage('Interrupt expired. Action resolved.');
+      if (remaining === 0 && pendingResolution.current !== resolutionKey && Date.now() >= nextResolutionAttempt.current) {
+        pendingResolution.current = resolutionKey;
+        nextResolutionAttempt.current = Date.now() + 1_000;
+        void send('resolve').then((resolved) => {
+          if (!resolved && pendingResolution.current === resolutionKey) pendingResolution.current = '';
+        });
       }
     };
-
     updateTimer();
     const timer = window.setInterval(updateTimer, 250);
     return () => window.clearInterval(timer);
-  }, [pendingAction, game, players]);
+  }, [pendingAction, send]);
 
-  if (!game) return <div className="p-8 text-center text-white">Starting game…</div>;
-
-  const activePlayer = players[game.activePlayerId];
-  const opponents = Object.values(players).filter((player) => player.id !== activePlayer.id);
+  const players = view?.players ?? {};
+  const self = view ? players[view.selfId] : undefined;
+  const activePlayer = view ? players[view.activePlayerId] : undefined;
+  const opponents = Object.values(players).filter((player) => player.id !== view?.selfId);
   const handSelection = selection?.zone === 'hand'
-    ? activePlayer.hand.find((card) => card.id === selection.cardId)
+    ? self?.hand.find((card) => card.id === selection.cardId)
     : undefined;
   const tableSelection = selection?.zone === 'table'
-    ? activePlayer.table.find((card) => card.id === selection.cardId)
+    ? self?.table.find((card) => card.id === selection.cardId)
     : undefined;
-  const eligibleResponder = appealPlayers[0];
-  const appealCard = eligibleResponder?.hand.find((card) => card.actionType === 'APPEAL');
+  const isMyTurn = Boolean(view && view.activePlayerId === view.selfId && !view.winnerId);
+  const appealCard = view?.canAppeal ? self?.hand.find((card) => card.actionType === 'APPEAL') : undefined;
 
-  const updatePlayer = (updated: Player) => {
-    setPlayers((current) => ({ ...current, [updated.id]: updated }));
-  };
-
-  const handleDraw = () => {
-    try {
-      const result = drawCard(game, activePlayer);
-      setGame({ ...result.game });
-      updatePlayer({ ...result.player, table: [...result.player.table], hand: [...result.player.hand] });
-      setSelection(null);
-      setMessage('Drew a card. Main phase.');
-    } catch (error) {
-      setMessage((error as Error).message);
-    }
-  };
-
-  const handlePlay = () => {
-    if (!handSelection) {
-      setMessage('Select an Action card in your Hand first.');
-      return;
-    }
-    const actionType = handSelection.actionType;
-    if (!actionType) {
-      setMessage('This Action card has no action type.');
-      return;
-    }
-    if (actionType === 'APPEAL') {
-      setMessage('APPEAL can only be played during an interrupt.');
-      return;
-    }
-    setPendingActionType(actionType);
-  };
-
-  const handleConfirmTarget = (targetPlayerId: string, targetCardId: string) => {
-    if (!pendingActionType || !handSelection) return;
-
-    try {
-      const result = playCard(game, activePlayer, handSelection.id, targetPlayerId, targetCardId, players);
-      setPlayers((current) => ({
-        ...current,
-        [activePlayer.id]: { ...result.player, hand: [...result.player.hand] }
-      }));
-      setPendingActionType(null);
-      setSelection(null);
-
-      if (!result.game.pendingAction) {
-        setGame({ ...result.game });
-        return;
-      }
-
-      const eligible = eligibleAppealPlayers(result.game.pendingAction, {
-        ...players,
-        [activePlayer.id]: result.player
-      });
-      if (eligible.length === 0) {
-        const resolved = resolveAction(result.game, { ...players, [activePlayer.id]: result.player });
-        setGame({ ...resolved.game });
-        setPlayers({ ...resolved.players });
-        setMessage('No eligible APPEAL. Action resolved immediately.');
-      } else {
-        setGame({ ...result.game });
-        setAppealDismissed(false);
-        setMessage('Waiting on a decision…');
-      }
-    } catch (error) {
-      setMessage((error as Error).message);
-      setPendingActionType(null);
-    }
-  };
-
-  const handleAppeal = () => {
-    if (!game.pendingAction || !eligibleResponder || !appealCard) return;
-    try {
-      const result = playAppeal(game, eligibleResponder, appealCard.id, players);
-      setGame({ ...result.game });
-      setPlayers((current) => ({
-        ...current,
-        [eligibleResponder.id]: { ...result.player, hand: [...result.player.hand] }
-      }));
-      setMessage('APPEAL succeeded. The action was cancelled.');
-    } catch (error) {
-      setMessage((error as Error).message);
-    }
-  };
-
-  const handleDiscard = () => {
-    if (!tableSelection) {
-      setMessage('Select a card on your Table to discard.');
-      return;
-    }
-    try {
-      const result = playCard(game, activePlayer, tableSelection.id);
-      setGame({ ...result.game, discardPile: [...result.game.discardPile] });
-      updatePlayer({ ...result.player, table: [...result.player.table] });
-      setSelection(null);
-      setMessage('Table card discarded.');
-    } catch (error) {
-      setMessage((error as Error).message);
-    }
-  };
-
-  const handleEndTurn = () => {
-    try {
-      const result = endTurn(game, activePlayer);
-      setGame({ ...result.game });
-      if (result.winnerId) {
-        updatePlayer(result.player);
-        setMessage(`${activePlayer.name} wins!`);
-        return;
-      }
-
-      const playerIds = Object.keys(players);
-      const nextPlayerId = playerIds[(playerIds.indexOf(activePlayer.id) + 1) % playerIds.length];
-      const updatedPlayers = { ...players, [activePlayer.id]: result.player };
-      setPlayers(updatedPlayers);
-      setGame({ ...result.game, activePlayerId: nextPlayerId, turnPhase: 'DRAW' });
-      setSelection(null);
-      setMessage(`${updatedPlayers[nextPlayerId].name}'s turn — draw a card`);
-    } catch (error) {
-      setMessage((error as Error).message);
-    }
-  };
-
-  const handleMoveCard = (zone: Zone, sourceId: string, targetId: string) => {
-    if (sourceId === targetId) return;
-    const cards = zone === 'table' ? activePlayer.table : activePlayer.hand;
-    const from = cards.findIndex((card) => card.id === sourceId);
-    const to = cards.findIndex((card) => card.id === targetId);
-    if (from < 0 || to < 0) return;
-    const reordered = arrangeCards(cards, from, to);
-    updatePlayer(zone === 'table'
-      ? { ...activePlayer, table: reordered }
-      : { ...activePlayer, hand: reordered });
-  };
-
-  const handleEmptyTableSlot = () => {
-    if (selection?.zone !== 'table') return;
-    const from = activePlayer.table.findIndex((card) => card.id === selection.cardId);
-    if (from < 0) return;
-    const reordered = [...activePlayer.table];
-    const [card] = reordered.splice(from, 1);
-    reordered.push(card);
-    updatePlayer({ ...activePlayer, table: reordered });
+  const runCommand = (action: 'draw' | 'appeal' | 'discard' | 'endTurn', payload: Record<string, unknown> = {}) => {
+    void send(action, payload);
     setSelection(null);
   };
 
-  const handleDropOnEmptyTableSlot = () => {
-    if (draggedCard?.zone !== 'table') return;
-    const from = activePlayer.table.findIndex((card) => card.id === draggedCard.cardId);
-    if (from >= 0) {
-      const reordered = [...activePlayer.table];
-      const [card] = reordered.splice(from, 1);
-      reordered.push(card);
-      updatePlayer({ ...activePlayer, table: reordered });
+  const handlePlay = () => {
+    if (!handSelection || handSelection.category !== 'ACTION' || !handSelection.actionType) return;
+    if (handSelection.actionType === 'APPEAL') {
+      setError('APPEAL can only be played during an interrupt.');
+      return;
     }
-    setDraggedCard(null);
+    setError('');
+    setPendingActionType(handSelection.actionType);
+  };
+
+  const handleConfirmTarget = async (targetPlayerId: string, targetCardId: string) => {
+    if (!pendingActionType || !handSelection) return;
+    const succeeded = await send('play', {
+      cardId: handSelection.id,
+      targetPlayerId,
+      targetCardId
+    });
+    if (succeeded) {
+      setPendingActionType(null);
+      setSelection(null);
+    }
   };
 
   const handleCardClick = (zone: Zone, card: Card) => {
-    if (selection?.zone === zone && selection.cardId === card.id) {
-      setSelection(null);
-    } else if (selection?.zone === zone) {
-      handleMoveCard(zone, selection.cardId, card.id);
-      setSelection(null);
-    } else {
-      setSelection({ zone, cardId: card.id });
-    }
+    if (zone === 'hand' && !isMyTurn) return;
+    if (selection?.zone === zone && selection.cardId === card.id) setSelection(null);
+    else setSelection({ zone, cardId: card.id });
   };
 
-  const moveOnDrop = (zone: Zone, cardId: string) => {
-    if (draggedCard?.zone === zone) handleMoveCard(zone, draggedCard.cardId, cardId);
-    setDraggedCard(null);
-  };
+  if (!view || !self || !activePlayer) {
+    return (
+      <main className="min-h-screen bg-black p-8 text-center text-white">
+        <p role={error ? 'alert' : 'status'}>{error || 'Connecting to the authoritative game…'}</p>
+      </main>
+    );
+  }
+
+  const exposedPlayers = Object.values(players) as Player[];
+  const exposedSelf = self as Player;
+  const actionReady = isMyTurn && view.turnPhase === 'MAIN';
 
   return (
     <main className="min-h-screen bg-black px-4 pb-10 pt-3 text-white sm:px-6">
-      <HamburgerMenu players={Object.values(players)} />
+      <HamburgerMenu players={exposedPlayers} />
       <header className="mb-5 flex items-center justify-center">
         <div className="text-center">
           <h1 className="m-0 text-4xl font-bold tracking-wide text-white">3EAL</h1>
@@ -311,117 +185,98 @@ export default function GameBoard({ roomCode, playerName, playerId, roomPlayers,
 
       <section className="mx-auto mb-5 flex max-w-6xl flex-wrap items-center justify-between gap-3 rounded-xl border border-white/25 bg-white/[0.06] p-4">
         <div>
-          <p className="text-lg">{message}</p>
-          <p className="text-sm text-white/70">Phase: {game.turnPhase} · Active: {activePlayer.name}</p>
+          <p className="text-lg">
+            {view.winnerId
+              ? `${players[view.winnerId]?.name ?? 'A player'} wins!`
+              : activePlayer.id === view.selfId
+                ? `${self.name}'s turn`
+                : `${activePlayer.name}'s turn`}
+          </p>
+          <p className="text-sm text-white/70">
+            Phase: {view.turnPhase} · Active: {activePlayer.name}
+          </p>
         </div>
         <div className="flex gap-4 text-sm text-white/80">
-          <span>Deck: {game.deck.length}</span>
-          <span>Discard: {game.discardPile.length}</span>
-          <span>Sets: {completeSetCount(activePlayer.table)}/3</span>
+          <span>Deck: {view.deckCount}</span>
+          <span>Discard: {view.discardPile.length}</span>
+          <span>Your sets: {completeSetCount(self.table)}/3</span>
         </div>
       </section>
+      {message && <p className="mx-auto mb-4 max-w-6xl text-center text-sm text-teal-100" role="status">{message}</p>}
+      {error && <p className="mx-auto mb-4 max-w-6xl text-center text-sm text-rose-300" role="alert">{error}</p>}
 
       <section className="mx-auto mb-6 flex max-w-6xl flex-wrap justify-center gap-6" aria-label="Deck and discard pile">
         <div className="text-center">
           <p className="mb-2">Draw Deck</p>
           <CardComponent card={{ id: 'deck-back', category: 'NORMAL', isRevealed: false }} faceDown />
-          <p className="mt-1 text-xs text-white/60">{game.deck.length} cards</p>
+          <p className="mt-1 text-xs text-white/60">{view.deckCount} cards</p>
         </div>
         <div className="text-center">
           <p className="mb-2">Discard Pile</p>
-          {game.discardPile.length > 0
-            ? <CardComponent card={game.discardPile[game.discardPile.length - 1]} />
+          {view.discardPile.length > 0
+            ? <CardComponent card={view.discardPile[view.discardPile.length - 1]} />
             : <div className="h-[112px] w-[80px] rounded-xl border border-dashed border-white/40" />}
-          <p className="mt-1 text-xs text-white/60">{game.discardPile.length} cards</p>
+          <p className="mt-1 text-xs text-white/60">{view.discardPile.length} cards</p>
         </div>
       </section>
 
       <section className="player-zones mx-auto mb-8 max-w-6xl gap-8 rounded-2xl border border-white/25 bg-white/[0.04] p-4 sm:p-6">
         <div className="min-w-0 flex-1">
-          <h2 className="mb-3 text-center text-xl font-semibold">{activePlayer.name}'s Table ({activePlayer.table.length}/9)</h2>
-            <div className="mx-auto grid w-fit grid-cols-3 gap-3">
-              {Array.from({ length: Math.max(9, activePlayer.table.length) }, (_, index) => {
-                const card = activePlayer.table[index];
-                return card ? (
-                  <div
-                    key={card.id}
-                    draggable
-                    onDragStart={() => setDraggedCard({ zone: 'table', cardId: card.id })}
-                    onDragEnd={() => setDraggedCard(null)}
-                    onDragOver={(event) => event.preventDefault()}
-                    onDrop={() => moveOnDrop('table', card.id)}
-                    onClick={() => handleCardClick('table', card)}
-                    className="cursor-pointer rounded-xl"
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`Your ${card.category === 'WILD' ? 'TEAL wild' : 'Table'} card${card.isRevealed ? ', revealed to all players' : ', concealed'}`}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault();
-                        handleCardClick('table', card);
-                      }
-                    }}
-                  >
-                    <CardComponent card={card} isSelectable isSelected={selection?.zone === 'table' && selection.cardId === card.id} isDragging={draggedCard?.cardId === card.id} />
-                  </div>
-                ) : (
-                  <button
-                    key={`empty-${index}`}
-                    type="button"
-                    onClick={handleEmptyTableSlot}
-                    onDragOver={(event) => event.preventDefault()}
-                    onDrop={handleDropOnEmptyTableSlot}
-                    aria-label={`Empty Table slot ${index + 1}`}
-                    className="h-[112px] w-[80px] rounded-xl border-2 border-dashed border-white/30 hover:border-white/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-400"
-                  />
-                );
-              })}
-            </div>
+          <h2 className="mb-3 text-center text-xl font-semibold">
+            Your Table ({self.table.length}/9)
+          </h2>
+          <div className="mx-auto grid w-fit grid-cols-3 gap-3">
+            {Array.from({ length: Math.max(9, self.table.length) }, (_, index) => {
+              const card = self.table[index];
+              return card ? (
+                <button
+                  key={card.id}
+                  type="button"
+                  disabled={!actionReady}
+                  onClick={() => handleCardClick('table', card)}
+                  className="cursor-pointer rounded-xl disabled:cursor-default"
+                  aria-label={`Your ${card.category === 'WILD' ? 'TEAL wild' : 'Table'} card${card.isRevealed ? ', revealed' : ', concealed'}`}
+                >
+                  <CardComponent card={card} isSelectable={actionReady} isSelected={selection?.zone === 'table' && selection.cardId === card.id} />
+                </button>
+              ) : <div key={`empty-${index}`} className="h-[112px] w-[80px] rounded-xl border border-dashed border-white/10" />;
+            })}
+          </div>
         </div>
-
         <div className="min-w-0 flex-1">
-          <h2 className="mb-3 text-center text-xl font-semibold">{activePlayer.name}'s Hand ({activePlayer.hand.length})</h2>
-          {activePlayer.hand.length === 0
+          <h2 className="mb-3 text-center text-xl font-semibold">Your Hand ({self.hand.length})</h2>
+          {self.hand.length === 0
             ? <p className="py-5 text-center text-white/60">No Action cards in Hand yet.</p>
             : <div className="flex flex-wrap justify-center gap-3 p-2">
-              {activePlayer.hand.map((card) => (
-                <div
+              {self.hand.map((card) => (
+                <button
                   key={card.id}
-                  draggable
-                  onDragStart={() => setDraggedCard({ zone: 'hand', cardId: card.id })}
-                  onDragEnd={() => setDraggedCard(null)}
-                  onDragOver={(event) => event.preventDefault()}
-                  onDrop={() => moveOnDrop('hand', card.id)}
+                  type="button"
+                  disabled={!actionReady}
                   onClick={() => handleCardClick('hand', card)}
-                  className="cursor-pointer rounded-xl"
-                  role="button"
-                  tabIndex={0}
+                  className="cursor-pointer rounded-xl disabled:cursor-default"
                   aria-label={`${card.title ?? card.actionType ?? 'Action'} action card`}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault();
-                      handleCardClick('hand', card);
-                    }
-                  }}
                 >
-                  <CardComponent card={card} isSelectable isSelected={selection?.zone === 'hand' && selection.cardId === card.id} isDragging={draggedCard?.cardId === card.id} />
-                </div>
+                  <CardComponent card={card} isSelectable={actionReady} isSelected={selection?.zone === 'hand' && selection.cardId === card.id} />
+                </button>
               ))}
             </div>}
         </div>
       </section>
 
       <section className="mx-auto mb-6 flex max-w-6xl flex-wrap justify-center gap-3" aria-label="Turn controls">
-        {game.turnPhase === 'DRAW' && <button type="button" style={buttonStyle} onClick={handleDraw}>Draw Card</button>}
-        {game.turnPhase === 'MAIN' && (
+        {view.turnPhase === 'DRAW' && isMyTurn && (
+          <button type="button" style={buttonStyle} onClick={() => runCommand('draw')}>Draw Card</button>
+        )}
+        {actionReady && (
           <>
             <button type="button" style={handSelection?.category === 'ACTION' ? buttonStyle : disabledButtonStyle}
-              disabled={!handSelection} onClick={handlePlay}>Play Selected</button>
+              disabled={handSelection?.category !== 'ACTION'} onClick={handlePlay}>Play Selected</button>
             <button type="button" style={tableSelection ? buttonStyle : disabledButtonStyle}
-              disabled={!tableSelection} onClick={handleDiscard}>Discard Selected</button>
-            <button type="button" style={activePlayer.table.length <= 9 ? buttonStyle : disabledButtonStyle}
-              disabled={activePlayer.table.length > 9} onClick={handleEndTurn}>End Turn</button>
-            {activePlayer.table.length > 9 && <p className="w-full text-center text-yellow-200">Discard down to 9 Table cards before ending your turn.</p>}
+              disabled={!tableSelection} onClick={() => tableSelection && runCommand('discard', { cardId: tableSelection.id })}>Discard Selected</button>
+            <button type="button" style={self.table.length <= 9 ? buttonStyle : disabledButtonStyle}
+              disabled={self.table.length > 9} onClick={() => runCommand('endTurn')}>End Turn</button>
+            {self.table.length > 9 && <p className="w-full text-center text-yellow-200">Discard down to 9 Table cards before ending your turn.</p>}
           </>
         )}
       </section>
@@ -431,7 +286,7 @@ export default function GameBoard({ roomCode, playerName, playerId, roomPlayers,
           <article key={opponent.id} className="rounded-xl border border-white/20 p-4">
             <div className="mb-3 flex items-center justify-between gap-3">
               <h2 className="text-lg font-semibold">{opponent.name}'s Table</h2>
-              <span className="rounded-full border border-white/40 px-3 py-1 text-sm">Hand: {opponent.hand.length}</span>
+              <span className="rounded-full border border-white/40 px-3 py-1 text-sm">Hand: {opponent.handCount}</span>
             </div>
             <div className="grid w-fit grid-cols-3 gap-2">
               {Array.from({ length: Math.max(9, opponent.table.length) }, (_, index) => {
@@ -450,22 +305,22 @@ export default function GameBoard({ roomCode, playerName, playerId, roomPlayers,
       {pendingActionType && (
         <ActionOverlay
           actionType={pendingActionType}
-          sourcePlayer={activePlayer}
-          players={Object.values(players)}
-          onConfirm={handleConfirmTarget}
+          sourcePlayer={exposedSelf}
+          players={exposedPlayers}
+          onConfirm={(targetPlayerId, targetCardId) => void handleConfirmTarget(targetPlayerId, targetCardId)}
           onCancel={() => setPendingActionType(null)}
         />
       )}
 
-      {game.pendingAction && (
+      {pendingAction && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/80 p-4">
-          {eligibleResponder && appealCard && !appealDismissed
+          {view.canAppeal && appealCard && !appealDismissed
             ? <div className="w-full max-w-md rounded-2xl border border-white bg-neutral-950 p-6 text-center shadow-2xl">
               <h2 className="mb-2 text-2xl font-bold">Play APPEAL?</h2>
-              <p className="mb-2 text-white/80">{game.pendingAction.actionType} will resolve in {secondsLeft}s.</p>
+              <p className="mb-2 text-white/80">{pendingAction.actionType} will resolve in {secondsLeft}s.</p>
               <p className="mb-5 text-sm text-white/60">A successful APPEAL cancels the action and discards both cards.</p>
               <div className="flex justify-center gap-3">
-                <button type="button" style={buttonStyle} onClick={handleAppeal}>Yes, APPEAL</button>
+                <button type="button" style={buttonStyle} onClick={() => runCommand('appeal', { cardId: appealCard.id })}>Yes, APPEAL</button>
                 <button type="button" style={buttonStyle} onClick={() => setAppealDismissed(true)}>No</button>
               </div>
             </div>
@@ -475,11 +330,11 @@ export default function GameBoard({ roomCode, playerName, playerId, roomPlayers,
         </div>
       )}
 
-      {game.winnerId && (
+      {view.winnerId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-6 text-center" role="alert">
           <div className="rounded-2xl border border-white bg-neutral-950 p-10">
             <h2 className="mb-3 text-4xl font-bold">Game Over!</h2>
-            <p className="text-2xl">{players[game.winnerId].name} wins!</p>
+            <p className="text-2xl">{players[view.winnerId]?.name} wins!</p>
           </div>
         </div>
       )}
