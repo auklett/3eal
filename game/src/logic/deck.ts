@@ -4,7 +4,7 @@ const COLORS: CardColor[] = ['C0C0FF', '008080', 'C06060'];
 const NUMBERS = [1, 2, 3, 4, 5, 6, 7];
 const SHAPES: CardShape[] = ['circle', 'triangle', 'square', 'pentagon', 'hexagon'];
 
-const ACTION_TYPES: ActionType[] = ['CONCEAL', 'STEAL', 'REVEAL', 'APPEAL', 'TEAL'];
+const ACTION_TYPES: ActionType[] = ['CONCEAL', 'STEAL', 'REVEAL', 'APPEAL'];
 const ACTION_DETAILS: Record<ActionType, { title: string; description: string }> = {
   CONCEAL: {
     title: 'CONCEAL',
@@ -12,19 +12,15 @@ const ACTION_DETAILS: Record<ActionType, { title: string; description: string }>
   },
   STEAL: {
     title: 'STEAL',
-    description: 'Take a normal card from an opponent\'s hand'
+    description: 'Take a normal card from an opponent\'s table'
   },
   REVEAL: {
     title: 'REVEAL',
-    description: 'Force an opponent to reveal a card from their hand'
+    description: 'Force an opponent to reveal a concealed card'
   },
   APPEAL: {
     title: 'APPEAL',
     description: 'Block an opponent\'s CONCEAL, STEAL, or REVEAL action'
-  },
-  TEAL: {
-    title: 'TEAL',
-    description: 'Wild card with Teal color and flexible shape/number'
   }
 };
 
@@ -34,13 +30,12 @@ export function generateDeck(): Card[] {
   cardCounter = 0;
   const deck: Card[] = [];
 
-  // Generate 105 Normal Cards: 3 colors × 7 numbers × 5 shapes
   for (const color of COLORS) {
     for (const number of NUMBERS) {
       for (const shape of SHAPES) {
         deck.push({
           id: `card_${String(cardCounter++).padStart(3, '0')}`,
-          isActionCard: false,
+          category: 'NORMAL',
           isRevealed: false,
           color,
           number,
@@ -50,12 +45,24 @@ export function generateDeck(): Card[] {
     }
   }
 
-  // Generate 15 Action Cards: 3 copies per action type
+  for (let i = 0; i < 3; i++) {
+    deck.push({
+      id: `card_${String(cardCounter++).padStart(3, '0')}`,
+      category: 'WILD',
+      isRevealed: false,
+      color: '008080',
+      number: undefined,
+      shape: undefined,
+      title: 'TEAL',
+      description: 'Wild card - flexible number and shape'
+    });
+  }
+
   for (const actionType of ACTION_TYPES) {
     for (let i = 0; i < 3; i++) {
       deck.push({
         id: `card_${String(cardCounter++).padStart(3, '0')}`,
-        isActionCard: true,
+        category: 'ACTION',
         isRevealed: false,
         actionType,
         title: ACTION_DETAILS[actionType].title,

@@ -1,76 +1,77 @@
 # 3EAL — Development Roadmap
 
-## Current Progress: ~80% (Phase 1 Nearly Complete)
+## Current Status
+
+The local game engine, game board, application views, and Firebase-backed live lobby are implemented. Gameplay state is still local to each browser: starting a room does not synchronize turns, cards, or actions between players. The hosted multiplayer MVP is therefore in progress, not complete.
 
 ---
 
-## Phase 1: Local Single-Player Core Test (In Progress)
+## Phase 1: Local Game Core (Complete ✅)
 
-### Completed ✅
-- [✅] Set up local React project repository with Vite + TypeScript + Tailwind
-- [✅] Implement card generation logic (105 Normal Cards + 15 Action Cards)
-- [✅] Implement local state machine (Draw phase, Main phase, Discard phase, Win validation)
-- [✅] Build UI card components based on 5:7 ratio (80px × 112px), `#000000` background, 3×3 grid layout with rounded corners
-- [✅] Add single-player vs. bot or manual turn switching on 1 device
-- [✅] Implement card rearrangement within hand (drag-and-drop + tap-to-move, both available at any time)
-- [✅] Add card glow effect (4px ring; white for colored/TEAL cards, teal for white/silver & white-background action cards)
-- [✅] Add hamburger menu with Rules and Players pages
-- [✅] Fix player card count display (shows actual cards with Normal/Action breakdown)
-- [✅] Set website favicon to the 3️⃣ emoji
-
-### Implemented Features Detail
-- **Glow effect on selected/dragged cards:** White border for colored cards; teal `#008080` glow for white/silver cards and white-background action cards
-- **Tap-to-move:** Tap card to select (glows), tap another slot to move/swap, tap same to cancel — works at any time (same availability as drag-and-drop)
-- **Drag-and-drop rearrangement** (existing)
-- **Fixed player card count display** in Players menu (Normal + Action)
-- **Action cards:** White-background action cards (CONCEAL/STEAL/REVEAL/APPEAL) show a teal glow when selected/dragged; TEAL cards show a white glow
-- **Revealed cards** show yellow ring indicator
-- **Website favicon** set to the 3️⃣ emoji
-
-### Remaining for Phase 1
-- [ ] Complete action card targeting UI (STEAL/REVEAL/CONCEAL with card selection)
-- [ ] Add set builder workspace UI for manual set formation
+- [x] Set up the React, TypeScript, Vite, and Tailwind application.
+- [x] Generate and shuffle the 120-card deck: 105 Normal, 3 TEAL wild, and 12 Action cards (3 each of CONCEAL, STEAL, REVEAL, and APPEAL).
+- [x] Implement local Draw, Main, Interrupt, turn-end, and win-condition logic.
+- [x] Validate sets and find a partition of nine Table cards into three valid sets, including TEAL wild cards.
+- [x] Implement the 3×3 Table, visible Hand, card selection/rearrangement, card counts, and action targeting UI.
+- [x] Implement CONCEAL, STEAL, REVEAL, and APPEAL effects in the local game engine.
+- [x] Implement the 30-second APPEAL window and eligibility rules.
+- [x] Add revealed/selected card indicators, action feedback, and the Players/Rules in-game menu.
 
 ---
 
-## Phase 2: Local Multiplayer Testing
+## Phase 2: Application Views and Live Lobby (Complete ✅)
 
-- [ ] Implement multi-player state logic locally (pass-and-play or multi-tab local sync)
-- [ ] Add `APPEAL` interrupt resolution window logic (10-second timer UI)
-- [ ] Validate complete set matching algorithms for all 4 patterns
-- [ ] Add bot/AI opponent for single-player testing
-- [ ] Polish animations and transitions for card interactions
+- [x] Build the polished Home view with room-code entry, Join Room, Create Room, and Rules actions.
+- [x] Build the Lobby view with room code, live roster, player rename, host controls, and status feedback.
+- [x] Add application navigation between Home, Lobby, and Game Board.
+- [x] Add shared Rules overlays and responsive dark-theme styling across the application.
+- [x] Add Firebase anonymous authentication for lobby player identity.
+- [x] Implement Firestore room creation and joining, live lobby subscriptions, room/player rename, host kick, leave, host handoff, and host start.
+- [x] Require at least two players before the host can start the game.
+- [x] Add local Firebase emulator configuration for development.
 
----
+### Current Boundary
 
-## Phase 3: MVP Hosted Release
-
-- [ ] Integrate Firebase Realtime Database for room creation and state synchronization
-- [ ] Build Room Code generation and joining logic
-- [ ] Implement Lobby management features (Kick, Rename, Leave, Start Game)
-- [ ] Deploy repository to Cloudflare Pages via GitHub CI/CD pipeline
-- [ ] Add Firebase Anonymous Authentication for player identity
-- [ ] Implement real-time game state sync across clients
+Lobby membership and room status are synchronized through Firestore. The Game Board initializes its own local deck and game state in each browser; gameplay changes are not shared with other players. Do not treat the current room start flow as synchronized multiplayer gameplay.
 
 ---
 
-## Phase 4: Polish & Extensions (Future)
+## Phase 3: Synchronized Multiplayer and Hosted MVP (In Progress)
 
-- [ ] Add sound effects and visual feedback for actions
-- [ ] Implement spectator mode
-- [ ] Add game statistics and history
-- [ ] Create tutorial/onboarding flow
-- [ ] Add settings (animation speed, color themes, etc.)
-- [ ] Mobile responsiveness improvements
-- [ ] Consider adding variants (team play, different deck sizes)
+### Shared Game State
+
+- [ ] Persist authoritative game state for each room and synchronize active player, turn phase, deck, discard pile, Table, Hand, pending action, and winner across clients.
+- [ ] Enforce private information: opponents must not receive Action card hands or the identities/faces of Concealed cards unless rules reveal them.
+- [ ] Validate every move against the current room state and acting player's identity; prevent stale, duplicate, or out-of-turn actions.
+- [ ] Resolve concurrent APPEAL attempts atomically so only one valid appeal can cancel a pending action.
+- [ ] Enforce the 30-second interrupt deadline using trusted server-side timing rather than a client's clock.
+- [ ] Handle reconnects, browser refresh, player departure, and host changes during an active game.
+
+### Production Release
+
+- [ ] Define and test production Firestore security rules; do not rely on permissive emulator rules.
+- [ ] Configure production Firebase authentication and project settings.
+- [ ] Deploy the application to Cloudflare Pages.
+- [ ] Add a GitHub CI/CD workflow for type checking, linting, and deployment.
 
 ---
 
-## Technical Debt & Quality
+## Phase 4: Quality, Accessibility, and Extensions (Future)
 
-- [ ] Add unit tests for validation logic (deck.ts, validation.ts, gameEngine.ts)
-- [ ] Add integration tests for game flow
-- [ ] Set up CI/CD pipeline with linting and type checking
-- [ ] Add ESLint/Prettier configuration
-- [ ] Document public APIs with JSDoc/TypeDoc
-- [ ] Performance optimization for win condition checking (memoization)
+- [ ] Add unit tests for deck generation, set validation, win partitions, and game actions.
+- [ ] Add integration tests for room lifecycle and complete game flows.
+- [ ] Test layouts and interactions across mobile, tablet, and desktop sizes.
+- [ ] Audit keyboard navigation, focus handling, reduced-motion behavior, and screen-reader labels.
+- [ ] Add an optional set-builder workspace for manually arranging candidate sets.
+- [ ] Consider a bot opponent for solo practice.
+- [ ] Add sound effects and additional action feedback.
+- [ ] Add tutorial/onboarding, settings, and optional animation or visual themes.
+- [ ] Consider spectator mode, game history/statistics, and alternate game variants.
+
+---
+
+## Ongoing Technical Debt
+
+- [ ] Add automated coverage for error cases, concurrent room operations, and interrupted/reconnected sessions.
+- [ ] Review bundle size and consider splitting large application dependencies.
+- [ ] Document and verify production deployment, Firebase rules, and operational recovery procedures.

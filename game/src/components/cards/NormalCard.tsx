@@ -9,12 +9,26 @@ interface NormalCardProps {
 }
 
 export default function NormalCard({ card, onClick, isSelectable = false, isSelected = false, isDragging = false }: NormalCardProps) {
-  if (card.isActionCard) return null;
+  if (card.category === 'ACTION') return null;
 
   const isGlowing = isSelected || isDragging;
   const backgroundColor = `#${card.color}`;
-  // White glow for colored cards, teal glow for white/silver cards
-  const glowColor = backgroundColor === '#FFFFFF' || backgroundColor === '#C0C0FF' ? '#008080' : '#FFFFFF';
+  const glowColor = '#FFFFFF';
+
+  if (card.category === 'WILD') {
+    return (
+      <div
+        onClick={onClick}
+        aria-label="TEAL wild card"
+        className={`relative flex h-[112px] w-[80px] items-center justify-center rounded-xl border-2 border-dashed border-white shadow-md transition-all ${isSelectable ? 'cursor-pointer hover:scale-105' : ''}`}
+        style={{ backgroundColor, ...(isGlowing ? { boxShadow: `0 0 0 4px ${glowColor}` } : {}) }}
+      >
+        <span className="absolute right-1 top-0 text-xl text-white" aria-hidden="true">✦</span>
+        <span className="text-4xl text-black" aria-hidden="true">✦</span>
+        <span className="sr-only">TEAL wild card</span>
+      </div>
+    );
+  }
 
   const renderShape = () => {
     const numberColor = backgroundColor;
@@ -134,10 +148,9 @@ export default function NormalCard({ card, onClick, isSelectable = false, isSele
         shadow-md
         transition-all
         ${isSelectable ? 'cursor-pointer hover:scale-105 hover:shadow-xl' : ''}
-        ${card.isRevealed ? 'ring-2 ring-yellow-400' : ''}
         ${isGlowing ? 'ring-4' : ''}
       `}
-      style={{ backgroundColor, borderRadius: '8px', ...(isGlowing ? { boxShadow: `0 0 0 4px ${glowColor}` } : {}) }}
+      style={{ backgroundColor, borderRadius: '12px', ...(card.isRevealed ? { outline: '2px solid #FACC15', outlineOffset: '-2px' } : {}), ...(isGlowing ? { boxShadow: `0 0 0 4px ${glowColor}` } : {}) }}
     >
       {renderShape()}
     </div>

@@ -4,21 +4,22 @@
 
 ### 1.1 Card Schema
 ```typescript
+type CardCategory = 'NORMAL' | 'WILD' | 'ACTION';
 type CardColor = 'C0C0FF' | '008080' | 'C06060';
 type CardShape = 'circle' | 'triangle' | 'square' | 'pentagon' | 'hexagon';
-type ActionType = 'CONCEAL' | 'STEAL' | 'REVEAL' | 'APPEAL' | 'TEAL';
+type ActionType = 'CONCEAL' | 'STEAL' | 'REVEAL' | 'APPEAL';
 
 interface Card {
   id: string; // Unique instance ID (e.g., "card_042")
-  isActionCard: boolean;
-  isRevealed: boolean; // Tracking for Reveal / Conceal effects
-  
-  // Normal Card Attributes (null if action card)
-  color?: CardColor;
-  number?: number; // 1 - 7
-  shape?: CardShape;
+  category: CardCategory;
+  isRevealed: boolean; // Only meaningful for NORMAL/WILD cards while on a Table
 
-  // Action Card Attributes (null if normal card)
+  // Normal & Wild Card Attributes (undefined for pure ACTION cards)
+  color?: CardColor;   // WILD is always '008080'
+  number?: number;     // 1-7; unset for WILD until resolved at set-check time
+  shape?: CardShape;   // unset for WILD until resolved at set-check time
+
+  // Action Card Attributes (undefined for NORMAL/WILD cards)
   actionType?: ActionType;
   title?: string;
   description?: string;
@@ -31,8 +32,9 @@ interface Player {
   id: string;
   name: string;
   isHost: boolean;
-  hand: Card[];
-  sets: Card[][]; // Completed sets (up to 3 sets of 3)
+  table: Card[]; // NORMAL + WILD cards only, max 9
+  hand: Card[];  // ACTION cards only, unlimited
+  sets: Card[][]; // Derived, win-moment only: a valid partition into 3 sets, populated once a win is detected — see §5
 }
 ```
 
@@ -43,19 +45,26 @@ interface RoomState {
   status: 'LOBBY' | 'IN_GAME' | 'FINISHED';
   players: Record<string, Player>; // Keyed by Player ID
   hostId: string;
-  
+
   // Active Game State
   game?: {
     deck: Card[];
     discardPile: Card[];
     activePlayerId: string;
-    turnPhase: 'DRAW' | 'MAIN' | 'DISCARD' | 'INTERRUPT';
+    turnPhase: 'DRAW' | 'MAIN' | 'INTERRUPT';
     pendingAction?: {
       sourcePlayerId: string;
-      targetPlayerId: string;
-      actionCard: Card;
-      targetCardId?: string;
-      canAppealUntil: number; // Timestamp for Appeal window
+      actionType: 'CONCEAL' | 'STEAL' | 'REVEAL';
+      actionCardId: string;
+      targetPlayerId: string;  // = sourcePlayerId for CONCEAL (self-target)
+      targetCardId: string;    // known to the server even when blind
+      wasBlindTarget: boolean; // true if the targeted card was Concealed at selection time
+      appealWindowEndsAt: number; // timestamp, creation + 30s
+      resolvedByPlayerId?: string; // set once an APPEAL wins the race
+      // No `eligibleAppealPlayerIds` here by design — see §3.4. Who's
+      // eligible by targeting rule is public; who ALSO holds an APPEAL
+      // card is private and must never be broadcast as a list, or it
+      // leaks hand contents to the rest of the room.
     };
     winnerId: string | null;
   };
@@ -64,13 +73,14 @@ interface RoomState {
 
 ## 2. Deck Generation & Combinations
 
-- **Normal Deck:** Exactly 1 card per combination of Color (3) × Number (7) × Shape (5) = **105 Normal Cards**
-- **Action Deck:** Exactly 3 copies per Action Type (5 types) = **15 Action Cards**
+- **Normal Deck:** Color (3) × Number (7) × Shape (5) = **105 Normal Cards**
+- **Wild Deck:** **3 TEAL Cards** — fixed color, flexible number/shape
+- **Action Deck:** 3 copies × 4 types = **12 Action Cards**
 - **Total Deck Size:** **120 Cards**
 
 ### Normal Card Colors:
 - `C0C0FF` — Periwinkle
-- `008080` — Teal (also used for TEAL wild cards)
+- `008080` — Teal
 - `C06060` — Rose
 
 ### Normal Card Numbers: 1–7
@@ -78,79 +88,92 @@ interface RoomState {
 ### Normal Card Shapes: Circle, Triangle, Square, Pentagon, Hexagon
 
 ### Action Card Types (3 copies each):
-1. **CONCEAL** — Hide one of your own revealed cards
-2. **STEAL** — Take a normal card from an opponent's hand
-3. **REVEAL** — Force an opponent to reveal a card
+1. **CONCEAL** — Hide one of your own Revealed Table cards
+2. **STEAL** — Take a Normal or WILD card from an opponent's Table
+3. **REVEAL** — Force a Concealed card on an opponent's Table to become Revealed
 4. **APPEAL** — Block an opponent's CONCEAL, STEAL, or REVEAL
-5. **TEAL** — Wild card (Teal color, flexible shape/number)
+
+### Wild Card:
+- **TEAL** — fixed Teal color (`008080`), flexible shape/number. Lives on the Table like a Normal card; never lives in Hand and is never "played" as an action.
 
 ## 3. Action Handlers & Rules Engine
 
 ### 3.1 CONCEAL
-- **Target:** Player's own revealed card.
-- **Effect:** Sets `card.isRevealed = false`. Can be blocked by APPEAL.
+- **Target:** Player's own Revealed Table card (Normal or WILD).
+- **Effect:** Sets `card.isRevealed = false`.
+- **Eligible to APPEAL:** Any other player — a CONCEAL benefits its user against the whole table, so everyone has standing to contest it.
 - **Phase:** Played during MAIN phase, triggers INTERRUPT phase.
 
 ### 3.2 STEAL
-- **Target:** Chosen normal card (including TEAL) from an opponent's hand only. Cannot target action cards or completed sets.
-- **Effect:** Transfers target Card from opponent's hand to active player's hand. Can be blocked by APPEAL.
+- **Target:** Any Normal or WILD card on an opponent's Table.
+  - If the target is Revealed, the acting player selects it directly.
+  - If the target is Concealed, the acting player selects a slot blind — the server resolves which card it is; the result is known only to the acting player and the original owner until/unless it's Revealed later.
+- **Effect:** Moves the card from the opponent's Table to the acting player's Table, **preserving its Revealed/Concealed state**.
+- **Restrictions:** Action cards can never be targeted (they live in Hand, not Table — structurally unreachable). Cards inside a completed set are **not** protected; nothing on the Table is safe from STEAL.
+- **Eligible to APPEAL:** Only the targeted player.
 - **Phase:** Played during MAIN phase, triggers INTERRUPT phase.
 
 ### 3.3 REVEAL
-- **Target:** Chosen card from an opponent's hand.
-- **Effect:** Sets `card.isRevealed = true` (visible to all players). Can be blocked by APPEAL.
+- **Target:** A Concealed card on an opponent's Table, selected blind. (Targeting an already-Revealed card is not allowed — there's no effect to gain.)
+- **Effect:** Sets `card.isRevealed = true` (visible to all players).
+- **Eligible to APPEAL:** Only the targeted player.
 - **Phase:** Played during MAIN phase, triggers INTERRUPT phase.
 
 ### 3.4 APPEAL
-- **Trigger:** Interrupt step when targeted by CONCEAL, STEAL, or REVEAL.
-- **Effect:** Cancels opponent's action card and sends both action cards to the discard pile.
-- **Phase:** Only playable during INTERRUPT phase by the targeted player.
+- **Trigger:** During the INTERRUPT phase, by any player listed in `pendingAction.eligibleAppealPlayerIds`.
+- **Effect:** Cancels `pendingAction`; both the original action card and the APPEAL card move to the discard pile.
+- **Race Resolution:** If multiple eligible players attempt APPEAL (only possible for CONCEAL, which can have several eligible players), resolve via an atomic transaction — the first write wins and sets `pendingAction.resolvedByPlayerId`; subsequent attempts are rejected server-side.
+- **Window:** 30 seconds from `pendingAction` creation. If it elapses with no successful APPEAL, `pendingAction` resolves normally (skip) and `turnPhase` returns to `MAIN`.
 
-### 3.5 TEAL
-- **Behavior:** Functions as a wild card. Fixed color: `008080` (Teal). Shape and number can match any value needed for set completion. Counts as a normal card for targeting purposes (can be stolen, revealed, etc.).
-- **Note:** TEAL is not "played" as an action — it stays in hand as a wild normal card.
+### 3.5 TEAL (Wild Card — not an action)
+- Lives on the Table alongside Normal cards; dealt and drawn the same way.
+- Fixed color: `008080` (Teal).
+- Number and shape are left unset on the card itself and are resolved dynamically, per-set, whenever the validation engine checks whether a group of 3 Table cards forms a valid set.
+- Targetable exactly like a Normal Table card — STEAL, REVEAL, and CONCEAL all apply to it the same way.
 
 ## 4. Game Flow & Turn Phases
 
 ### Phase Sequence:
-1. **DRAW** — Active player draws 1 card from deck (reshuffles discard if empty)
-2. **MAIN** — Player may:
-   - Discard unlimited normal cards to discard pile
-   - Play unlimited action cards (CONCEAL, STEAL, REVEAL, TEAL)
-   - Each targeted action (CONCEAL/STEAL/REVEAL) triggers INTERRUPT phase
-3. **INTERRUPT** — Targeted player has 10 seconds to play APPEAL to block the action
-4. **End Turn** — Player discards down to max 9 cards, win condition checked
+1. **DRAW** — Active player draws 1 card from the deck (reshuffles discard pile if empty). NORMAL/WILD → Table. ACTION → Hand.
+2. **MAIN** — Player may, in any order, any number of times:
+   - Discard any number of Normal/WILD cards from their Table.
+   - Play CONCEAL, STEAL, or REVEAL from their Hand — each triggers INTERRUPT.
+3. **INTERRUPT** — Eligible player(s) have 30 seconds to play APPEAL; if none do, the action resolves and phase returns to MAIN.
+4. **End Turn** — Player discards their Table down to a maximum of 9 cards (Hand has no limit); win condition is then checked against the Table.
 
 ## 5. Win Condition Validation (Pattern Engine)
 
-A player wins when they possess **3 complete sets of 3 cards** (9 cards total in valid sets).
+A player wins when their **Table** holds **3 complete sets of 3 cards** (9 cards total).
 
-A set of 3 cards is valid if it meets **at least one pattern** across all 3 cards:
+A set of 3 Table cards is valid if it meets **at least one** of these patterns:
 
 | Pattern | Description |
 |---------|-------------|
-| **Same Color** | All 3 cards share identical color (TEAL wild = `008080`) |
-| **Same Number** | All 3 cards share identical number (TEAL adopts any number) |
-| **Same Shape** | All 3 cards share identical shape (TEAL adopts any shape) |
-| **Consecutive Numbers** | Card numbers form a sequence (e.g., 2, 3, 4 or 5, 6, 7) |
+| **Same Color** | All 3 cards share identical color (WILD counts as `008080`) |
+| **Same Number** | All 3 cards share identical number (WILD adopts any number) |
+| **Same Shape** | All 3 cards share identical shape (WILD adopts any shape) |
 
-### TEAL Wild Card Behavior in Patterns:
+*(Consecutive Numbers has been removed as a valid pattern.)*
+
+### WILD Card Behavior in Patterns:
 - **Color:** Always counts as `008080` (Teal)
 - **Number:** Can adopt any number 1–7 to complete a pattern
 - **Shape:** Can adopt any shape to complete a pattern
-- **Consecutive:** Can fill gaps in sequences (e.g., [2, TEAL, 4] or [TEAL, 3, 4])
 
 ### Validation Logic:
-- Filters out action cards (except TEAL which acts as wild)
-- Requires exactly 3 valid cards per set
-- Checks all 4 patterns — any single match validates the set
-- Win check tests all combinations of 3 sets from 9+ cards
+- Only Table cards (Normal + WILD) are ever considered; Action cards in Hand are structurally excluded, not filtered.
+- Requires exactly 3 cards per set, and exactly 3 disjoint sets covering all 9 Table cards to win.
+- Checks all 3 patterns — any single match validates a set.
+- **Resolved (previously an open question):** earlier drafts worried about a tie-break for "the" completed set when multiple valid groupings exist. That question only mattered for *protecting* set cards from STEAL — and since STEAL can already target any Table card regardless of set membership (rules.md §9), there's nothing left to protect, so no tie-break is needed for correctness.
+  - `checkWinCondition()` only needs to confirm *some* valid partition of the 9 Table cards into 3 sets exists — an existence check, not an identification of specific groupings.
+  - Mid-game progress display (e.g. "2/3 sets" on the Players page) only needs a count — `completeSetCount()` finds the maximum number of disjoint valid sets in the current Table via a greedy/max-matching search. Which exact cards land in which set doesn't need to be pinned down until the win moment.
+  - `findBestPartition()` is only ever called once, at the moment `checkWinCondition()` returns true, purely to populate `sets: Card[][]` for the winning reveal animation. Any valid partition is correct to show — there's no wrong answer to tie-break at that point either.
 
 ## 6. Implementation Files
 
 | File | Purpose |
 |------|---------|
-| `src/logic/deck.ts` | Deck generation (105 normal + 15 action), shuffling |
-| `src/logic/validation.ts` | `validateSet()`, `checkWinCondition()`, pattern matchers |
-| `src/logic/gameEngine.ts` | State machine: `initializeGame`, `drawCard`, `playCard`, `resolveAction`, `playAppeal`, `endTurn` |
+| `src/logic/deck.ts` | Deck generation (105 Normal + 3 WILD + 12 Action), shuffling |
+| `src/logic/validation.ts` | `validateSet()`, `findBestPartition()`, `checkWinCondition()`, pattern matchers |
+| `src/logic/gameEngine.ts` | State machine: `initializeGame`, `drawCard`, `playCard`, `resolveAction`, `playAppeal` (atomic), `endTurn` |
 | `src/types/index.ts` | All TypeScript type definitions |

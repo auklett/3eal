@@ -9,14 +9,12 @@ interface ActionCardProps {
 }
 
 export default function ActionCard({ card, onClick, isSelectable = false, isSelected = false, isDragging = false }: ActionCardProps) {
-  if (!card.isActionCard) return null;
+  if (card.category !== 'ACTION') return null;
 
   const isGlowing = isSelected || isDragging;
-  const isTeal = card.actionType === 'TEAL';
-  const backgroundColor = isTeal ? '#008080' : '#FFFFFF';
+  const backgroundColor = '#FFFFFF';
   const textColor = '#000000';
-  // White glow for TEAL cards, teal glow for white cards
-  const glowColor = backgroundColor === '#FFFFFF' ? '#008080' : '#FFFFFF';
+  const glowColor = '#008080';
 
   return (
     <div
@@ -33,7 +31,7 @@ export default function ActionCard({ card, onClick, isSelectable = false, isSele
         ${isSelectable ? 'cursor-pointer hover:scale-105 hover:shadow-xl' : ''}
         ${isGlowing ? 'ring-4' : ''}
       `}
-      style={{ backgroundColor, borderRadius: '8px', ...(isGlowing ? { boxShadow: `0 0 0 4px ${glowColor}` } : {}) }}
+      style={{ backgroundColor, borderRadius: '12px', border: '1px solid #D4D4D4', ...(isGlowing ? { boxShadow: `0 0 0 4px ${glowColor}` } : {}) }}
     >
       <div
         className="text-sm font-bold text-center mb-0.5 leading-tight"

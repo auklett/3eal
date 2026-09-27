@@ -1,153 +1,134 @@
 # 3EAL
 
-A strategic card game where players race to form 3 sets of 3 matching cards. Built with React, TypeScript, and Vite.
+3EAL is a strategic card game about collecting and protecting sets. Build three valid sets of three cards before your opponents, while using action cards to disrupt their plans.
 
----
+The application includes a polished Home screen, a Firebase-backed live Lobby, an interactive Game Board, and shared Rules overlays. **The lobby is synchronized across browsers; gameplay is currently local to each browser and is not synchronized between players.**
 
-## 🎮 Game Overview
+## Game overview
 
-**3EAL** is a turn-based card game for 2+ players. The goal is to be the first to form **3 complete sets of 3 cards** (9 cards total) using pattern matching.
+- **Players:** 2 or more
+- **Deck:** 120 cards — 105 Normal, 3 TEAL wild, and 12 Action cards
+- **Objective:** Be the first to have 9 cards on your Table that form 3 valid sets
+- **Valid sets:** Three cards sharing a color, number, or shape
+- **TEAL:** A wild card with fixed Teal color that can adopt any number or shape when completing a set
 
-### Core Mechanics
-- **120-card deck:** 105 unique normal cards (3 colors × 7 numbers × 5 shapes) + 15 action cards (3 each of 5 types)
-- **4 winning patterns:** Same Color, Same Number, Same Shape, Consecutive Numbers
-- **5 action cards:** CONCEAL, STEAL, REVEAL, APPEAL, TEAL (wild)
-- **TEAL wild cards:** Fixed Teal color, flexible shape/number to complete any pattern
-- **Interrupt system:** Targeted players can block CONCEAL/STEAL/REVEAL with APPEAL within 10 seconds
+Action cards are **CONCEAL**, **STEAL**, **REVEAL**, and **APPEAL**. CONCEAL, STEAL, and REVEAL open an interrupt window; the eligible player or players can use APPEAL to cancel the action. The current game implementation uses a 30-second window.
 
----
+For the complete rules and card details, see [`docs/rules.md`](docs/rules.md).
 
-## 📚 Documentation
+## Current implementation status
 
-| Document | Description |
-|----------|-------------|
-| [`docs/logic.md`](docs/logic.md) | Complete data schemas, deck generation, action handlers, game flow, win validation, and pattern engine |
-| [`docs/rules.md`](docs/rules.md) | Official game rules: objective, setup, patterns, turn flow, action cards, deck composition, winning |
-| [`docs/tech-stack.md`](docs/tech-stack.md) | Technology stack, directory structure, available scripts, implementation files |
-| [`docs/ui-ux.md`](docs/ui-ux.md) | Design system, card layouts, screen views, interaction patterns, accessibility, implementation status |
-| [`docs/roadmap.md`](docs/roadmap.md) | Development phases, current progress, future milestones (includes merged backlog) |
+### Implemented
 
----
+- Local game engine for drawing, action resolution, turn flow, and win checks
+- Set validation and partition search, including TEAL wild cards
+- Game Board with Table and Hand, card selection/rearrangement, action targeting, and player/rules menus
+- Home screen with room-code entry, room creation, and Rules access
+- Live Firebase Lobby with room creation/joining, roster updates, player and room renaming, host kick, leave, host handoff, and host start
+- Firebase anonymous authentication for lobby player identity
+- Local Firebase Auth and Firestore emulator configuration for development
 
-## 🚀 Quick Start
+### Not yet implemented
+
+Game state is not shared across browsers. Each browser initializes and updates its own deck, hands, tables, turns, and actions after entering the Game Board. Production Firestore security rules, authoritative server-side gameplay and appeal timing, hosting, and automated tests also remain to be completed. See [`docs/roadmap.md`](docs/roadmap.md).
+
+## Quick start
+
+### Requirements
+
+- Node.js and npm
+- Firebase CLI, for running the local Auth and Firestore emulators
+
+### Configure Firebase
+
+The app connects to the Auth emulator at `localhost:9099` and Firestore emulator at `localhost:8080` in development. Provide the Firebase web-app configuration values in `game/.env.local`:
+
+```dotenv
+VITE_FIREBASE_API_KEY=your-api-key
+VITE_FIREBASE_AUTH_DOMAIN=your-auth-domain
+VITE_FIREBASE_PROJECT_ID=your-project-id
+VITE_FIREBASE_STORAGE_BUCKET=your-storage-bucket
+VITE_FIREBASE_MESSAGING_SENDER_ID=your-messaging-sender-id
+VITE_FIREBASE_APP_ID=your-app-id
+```
+
+Do not commit `.env.local`. The emulator configuration is in [`game/firebase.json`](game/firebase.json).
+
+### Start the app
+
+In one terminal:
 
 ```bash
 cd game
 npm install
+npx firebase-tools emulators:start --only auth,firestore
+```
+
+In a second terminal:
+
+```bash
+cd game
 npm run dev
 ```
 
-Open **http://localhost:5173** in your browser.
+Open **http://localhost:5173**. The Firebase Emulator UI is enabled by the local emulator configuration.
 
-### Available Scripts
-- `npm run dev` — Start development server
-- `npm run build` — Build for production
-- `npm run preview` — Preview production build
-- `npm run lint` — Run OxLint
+### Available scripts
 
----
+Run these from `game/`:
 
-## 🏗️ Architecture
+| Command | Description |
+|---|---|
+| `npm run dev` | Start the Vite development server |
+| `npm run build` | Run TypeScript project builds and create a production bundle |
+| `npm run preview` | Preview the production build locally |
+| `npm run lint` | Run OxLint |
 
-```
+## Project structure
+
+```text
 game/
 ├── src/
-│   ├── components/     # React UI components (cards, game, lobby)
-│   ├── logic/          # Pure game logic (deck, validation, engine)
-│   │   ├── deck.ts     # 120-card generation & shuffling
-│   │   ├── validation.ts # Pattern matching & win detection
-│   │   └── gameEngine.ts # State machine & action handlers
-│   ├── types/          # TypeScript schemas (Card, Player, RoomState)
-│   └── pages/          # GameBoard and routing
-└── public/             # Static assets
+│   ├── components/
+│   │   ├── cards/       # Normal, Action, and shared card UI
+│   │   └── game/        # Game menus, action targeting, and rules overlay
+│   ├── lib/             # Firebase initialization and room/lobby operations
+│   ├── logic/           # Deck generation, validation, and local game engine
+│   ├── pages/           # Home, Lobby, and Game Board views
+│   ├── types/           # Game and card TypeScript types
+│   ├── App.tsx          # Navigation and view composition
+│   └── index.css        # Tailwind CSS import and global styles
+├── firebase.json        # Local Firebase Emulator Suite configuration
+└── package.json         # Dependencies and npm scripts
+
+docs/
+├── logic.md             # Data model and game logic
+├── rules.md             # Game rules
+├── tech-stack.md        # Architecture and technology notes
+├── ui-ux.md             # UI and interaction requirements
+└── roadmap.md           # Progress, known boundaries, and future work
 ```
 
-### Key Logic Modules
-- **deck.ts** — Generates 105 normal + 15 action cards, Fisher-Yates shuffle
-- **validation.ts** — Validates 4 patterns, checks win condition via combinatorial search
-- **gameEngine.ts** — Turn phases (DRAW → MAIN → INTERRUPT), action resolution, appeal handling
+## Technology
 
----
-
-## 🎯 Current Status
-
-**Phase 1 (Local Single-Player): ~80% Complete**
-
-| Feature | Status |
-|---------|--------|
-| Project setup (Vite + React + TS + Tailwind) | ✅ |
-| Card generation (120 cards) | ✅ |
-| Game state machine | ✅ |
-| Card UI components (5:7 ratio, 3×3 grid) | ✅ |
-| Single-player / manual turn switching | ✅ |
-| Card rearrangement (drag-and-drop + tap-to-move, any time) | ✅ |
-| Card glow effect (selected/dragged, teal for white cards) | ✅ |
-| Hamburger menu (Rules, Players with card count breakdown) | ✅ |
-| Player card count display (Normal + Action breakdown) | ✅ |
-| Website favicon (3️⃣ emoji) | ✅ |
-| Action targeting UI (STEAL/REVEAL/CONCEAL) | 🚧 In Progress |
-| Set builder workspace | ❌ Not Started |
-
-**Implemented Features Detail:**
-- **Glow effect:** White for colored/TEAL cards; teal `#008080` for white/silver cards & white-background action cards
-- **Tap-to-move:** Select card (glow), tap slot to move/swap, tap same to cancel — available anytime
-- **Revealed cards:** Yellow ring indicator
-- **Players menu:** Shows actual card count with Normal/Action breakdown
-
-**Next Phases:**
-- **Phase 2:** Local multiplayer, appeal timer, AI opponent
-- **Phase 3:** Firebase integration, hosted MVP on Cloudflare Pages
-
----
-
-## 🎨 Design System
-
-- **Background:** `#000000` (Pure Black)
-- **Text:** `#FFFFFF` (Pure White)
-- **Cards:** 80×112px (5:7 ratio), rounded corners (12px)
-- **Normal Card Colors:** `#C0C0FF` (Periwinkle), `#008080` (Teal), `#C06060` (Rose)
-- **Action Cards:** White background (CONCEAL/STEAL/REVEAL/APPEAL), Teal (TEAL)
-- **Selection Glow:** White glow for colored cards and TEAL; teal (#008080) glow for white/silver cards and white-background action cards; rendered with inline box-shadow so arbitrary colors display correctly
-- **Favicon:** 3️⃣ emoji
-
----
-
-## 📖 How to Play (Quick Reference)
-
-1. **Draw** 1 card to start your turn
-2. **Main Phase:** Discard normals, play actions (CONCEAL/STEAL/REVEAL/TEAL)
-3. **Interrupt:** Targeted player has 10s to play APPEAL and block
-4. **End Turn:** Discard down to 9 cards, check for 3 valid sets → **WIN!**
-
-**Valid Sets (any one):**
-- 3 cards same color
-- 3 cards same number (1–7)
-- 3 cards same shape (○ △ □ ⬟ ⬡)
-- 3 consecutive numbers (e.g., 2-3-4)
-
-**TEAL** = Wild card (always Teal color, any shape/number)
-
----
-
-## 🛠️ Tech Stack
-
-| Layer | Technology |
-|-------|------------|
-| Frontend | React 19, TypeScript 6 |
-| Build | Vite 8 |
+| Area | Technology |
+|---|---|
+| UI | React 19, TypeScript 6 |
+| Build/development | Vite 8 |
 | Styling | Tailwind CSS 4 |
-| Linting | OxLint |
-| Backend (Planned) | Firebase Realtime DB + Auth |
-| Hosting (Planned) | Cloudflare Pages |
+| Lobby backend | Firebase Authentication and Cloud Firestore |
+| Local checks | OxLint and TypeScript build |
 
----
+See [`docs/tech-stack.md`](docs/tech-stack.md) for architecture details.
 
-## 🤝 Contributing
+## Documentation
 
-See [`docs/roadmap.md`](docs/roadmap.md) for current priorities. The game logic is pure TypeScript in `game/src/logic/` — easy to test and extend.
+- [`docs/rules.md`](docs/rules.md) — Objective, cards, setup, valid sets, turns, and actions
+- [`docs/logic.md`](docs/logic.md) — Data schemas, engine behavior, deck, and validation
+- [`docs/ui-ux.md`](docs/ui-ux.md) — Views, design system, and interaction requirements
+- [`docs/tech-stack.md`](docs/tech-stack.md) — Technology and architecture
+- [`docs/roadmap.md`](docs/roadmap.md) — Completed work and remaining milestones
 
----
+## License
 
-## 📄 License
-
-MIT — Feel free to use, modify, and distribute.
+MIT — See the repository license for details.
