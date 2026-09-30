@@ -63,8 +63,10 @@ In one terminal:
 ```bash
 cd game
 npm install
-npx firebase-tools emulators:start --only auth,firestore
+npx firebase-tools emulators:start --project eal-5d762 --only auth,firestore
 ```
+
+Use the same project ID as `VITE_FIREBASE_PROJECT_ID` in `.env.local`; otherwise, the emulator can issue tokens for a different project that the app will reject.
 
 In a second terminal, configure the Pages emulator bindings once and run the local Pages Functions runtime:
 
