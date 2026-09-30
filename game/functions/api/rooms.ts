@@ -9,6 +9,30 @@ interface Env {
   FIREBASE_AUTH_EMULATOR_HOST?: string;
 }
 
+function normalizedPlayerName(name: string): string {
+  return name.trim().toLowerCase();
+}
+
+function isPlayerNameTaken(players: Record<string, RoomPlayer>, name: string, exceptId?: string): boolean {
+  const key = normalizedPlayerName(name);
+  return Object.values(players).some((player) =>
+    player.id !== exceptId && normalizedPlayerName(player.name) === key
+  );
+}
+
+function nextDefaultPlayerName(players: Record<string, RoomPlayer>): string {
+  for (let number = 1; ; number++) {
+    const name = `Player ${number}`;
+    if (!isPlayerNameTaken(players, name)) return name;
+  }
+}
+
+function uniqueJoinName(players: Record<string, RoomPlayer>, requestedName: string): string {
+  if (!isPlayerNameTaken(players, requestedName)) return requestedName;
+  if (/^Player\s+\d+$/i.test(requestedName)) return nextDefaultPlayerName(players);
+  throw new ApiError('That player name is already in use. Choose a different name.', 409);
+}
+
 interface PagesContext {
   request: Request;
   env: Env;
@@ -29,6 +53,7 @@ interface PendingView {
 interface PlayerView extends Omit<Player, 'hand'> {
   hand: Card[];
   handCount: number;
+  tableOrder: Array<string | null>;
 }
 
 interface GameView {
@@ -47,6 +72,7 @@ interface GameView {
 interface PrivateState extends RoomState {
   playerOrder: string[];
   targetRefs: Record<string, Record<string, string>>;
+  tableOrder?: Record<string, Array<string | null>>;
 }
 
 interface Write {
@@ -467,6 +493,23 @@ function playerRecords(room: Record<string, unknown>): Record<string, RoomPlayer
   return room.players as Record<string, RoomPlayer>;
 }
 
+function tableOrderFor(state: PrivateState, player: Player): Array<string | null> {
+  const currentIds = new Set(player.table.map((card) => card.id));
+  const savedOrder = state.tableOrder?.[player.id] ?? player.table.map((card) => card.id);
+  const slots = Array.from({ length: Math.max(9, player.table.length) }, (_, index) => {
+    const id = savedOrder[index];
+    return id && currentIds.has(id) ? id : null;
+  });
+  const included = new Set(slots.filter((id): id is string => id !== null));
+  for (const card of player.table) {
+    if (included.has(card.id)) continue;
+    const emptyIndex = slots.indexOf(null);
+    if (emptyIndex >= 0) slots[emptyIndex] = card.id;
+    else slots.push(card.id);
+  }
+  return slots;
+}
+
 function createState(roomCode: string, room: Record<string, unknown>): PrivateState {
   const members = Object.values(playerRecords(room)).sort((a, b) => a.joinedAt - b.joinedAt);
   if (members.length < 2) throw new ApiError('At least two players are required to start.');
@@ -483,25 +526,32 @@ function createState(roomCode: string, room: Record<string, unknown>): PrivateSt
     }
   ]));
   const game = initializeGame(Object.values(players));
-  return { roomCode, status: 'IN_GAME', hostId: String(room.hostId), players, game, playerOrder: members.map((player) => player.id), targetRefs: {} };
+  return { roomCode, status: 'IN_GAME', hostId: String(room.hostId), players, game, playerOrder: members.map((player) => player.id), targetRefs: {}, tableOrder: {} };
 }
 
 function projectView(state: PrivateState, selfId: string): GameView {
   const targetRefs: Record<string, string> = {};
   const players: Record<string, PlayerView> = {};
   for (const player of Object.values(state.players)) {
+    const cardViewIds = new Map<string, string>();
     const table = player.table.map((card) => {
-      if (player.id === selfId || card.isRevealed) return { ...card };
+      if (player.id === selfId || card.isRevealed) {
+        cardViewIds.set(card.id, card.id);
+        return { ...card };
+      }
       const ref = crypto.randomUUID();
       targetRefs[ref] = card.id;
+      cardViewIds.set(card.id, ref);
       return { id: ref, category: 'NORMAL', isRevealed: false } as Card;
     });
+    const tableOrder = tableOrderFor(state, player).map((id) => id === null ? null : cardViewIds.get(id) ?? null);
     const isSelf = player.id === selfId;
     players[player.id] = {
       id: player.id,
       name: player.name,
       isHost: player.isHost,
       table,
+      tableOrder,
       hand: isSelf ? player.hand.map((card) => ({ ...card })) : [],
       handCount: player.hand.length,
       sets: isSelf ? player.sets.map((set) => set.map((card) => ({ ...card }))) : []
@@ -580,6 +630,7 @@ async function mutateGame(env: Env, code: string, actorId: string, body: Record<
     membership(room, actorId);
     if (room.status !== 'IN_GAME' || !rawState) throw new ApiError('This game is not active.', 409);
     const state = rawState as unknown as PrivateState;
+    state.tableOrder ??= {};
     const game = state.game;
     if (!game) throw new ApiError('This game is not active.', 409);
     const now = Date.now();
@@ -591,6 +642,24 @@ async function mutateGame(env: Env, code: string, actorId: string, body: Record<
       if (!expired) throw new ApiError('The interrupt window is still open.', 409);
     } else if (expired) {
       return { writes: stateWrites(env, state), result: true };
+    } else if (action === 'reorder') {
+      const player = state.players[actorId];
+      const requestedOrder = body.tableOrder;
+      const expectedLength = Math.max(9, player.table.length);
+      if (!Array.isArray(requestedOrder) || requestedOrder.length !== expectedLength) {
+        throw new ApiError('The Table layout is out of date. Refresh and try again.', 409);
+      }
+      const cardIds = new Set(player.table.map((card) => card.id));
+      const seen = new Set<string>();
+      for (const slot of requestedOrder) {
+        if (slot === null) continue;
+        if (typeof slot !== 'string' || !cardIds.has(slot) || seen.has(slot)) {
+          throw new ApiError('The Table layout contains an invalid card.', 400);
+        }
+        seen.add(slot);
+      }
+      if (seen.size !== cardIds.size) throw new ApiError('The Table layout is missing a card.', 400);
+      state.tableOrder[actorId] = requestedOrder as Array<string | null>;
     } else if (action === 'draw') {
       const player = assertActive(state, actorId, 'DRAW');
       drawCard(game, player);
@@ -711,13 +780,14 @@ async function route(request: Request, env: Env): Promise<Response> {
   const code = roomCode;
 
   if (body.action === 'join') {
-    const name = cleanName(body.name);
+    const requestedName = cleanName(body.name);
     await transact(env, [roomPath(code)], ([room]) => {
       if (!room) throw new ApiError('That room code was not found.', 404);
       const players = playerRecords(room);
       if (players[actorId]) return { writes: [], result: undefined };
       if (room.status !== 'LOBBY') throw new ApiError('This game has already started.', 409);
       if (Object.keys(players).length >= MAX_PLAYERS) throw new ApiError(`Rooms support at most ${MAX_PLAYERS} players.`);
+      const name = uniqueJoinName(players, requestedName);
       return {
         writes: [setWrite(env, roomPath(code), {
           players: { ...players, [actorId]: { id: actorId, name, joinedAt: Date.now() } }
@@ -772,6 +842,9 @@ async function route(request: Request, env: Env): Promise<Response> {
       if (room.status !== 'LOBBY') throw new ApiError('Lobby changes are disabled after the game starts.', 409);
       if (body.action === 'renamePlayer') {
         const name = cleanName(body.name);
+        if (isPlayerNameTaken(players, name, actorId)) {
+          throw new ApiError('That player name is already in use. Choose a different name.', 409);
+        }
         return {
           writes: [setWrite(env, roomPath(code), {
             players: { ...players, [actorId]: { ...players[actorId], name } }
@@ -803,7 +876,7 @@ async function route(request: Request, env: Env): Promise<Response> {
     return response({ ok: true });
   }
 
-  if (['draw', 'play', 'appeal', 'discard', 'endTurn', 'resolve'].includes(String(body.action))) {
+  if (['draw', 'play', 'appeal', 'discard', 'endTurn', 'resolve', 'reorder'].includes(String(body.action))) {
     await mutateGame(env, code, actorId, body);
     return response({ ok: true });
   }

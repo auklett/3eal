@@ -2,7 +2,7 @@
 
 ## Current Status
 
-The game board, Firebase-backed live lobby, server-authoritative game API, and per-player sanitized game views are implemented and exercised against the local Firebase emulators. Production Firestore rules and Cloudflare Pages have not been deployed, and active-game player departure/host changes and automated test suites remain. The hosted multiplayer MVP is therefore in progress, not complete.
+The game board, Firebase-backed live lobby, server-authoritative game API, and per-player sanitized game views are implemented and exercised against the local Firebase emulators. Production Firestore rules and Cloudflare Pages bindings still require verification, and active-game player departure/host changes and automated test suites remain. The hosted multiplayer MVP is therefore in progress, not complete.
 
 ---
 
@@ -29,6 +29,9 @@ The game board, Firebase-backed live lobby, server-authoritative game API, and p
 - [x] Implement Firestore room creation and joining, live lobby subscriptions, room/player rename, host kick, leave, host handoff, and host start.
 - [x] Require at least two players before the host can start the game.
 - [x] Add local Firebase emulator configuration for development.
+- [x] Enforce unique room player names and assign numbered defaults (`Player 1`, `Player 2`, …).
+- [x] Support tap-to-move and drag-and-drop rearrangement of a player's Table cards at any time.
+- [x] Provide immediate pending, confirmed, and failed feedback for server-bound gameplay actions.
 
 ### Current Boundary
 
@@ -54,6 +57,7 @@ Lobby metadata remains in `rooms/{roomCode}`. Game mutations pass through Cloudf
 - [ ] Deploy the reviewed Firestore rules to production before enabling production gameplay.
 - [ ] Configure production Firebase authentication and project settings.
 - [ ] Deploy the application to Cloudflare Pages.
+- [ ] Verify the production `FIREBASE_SERVICE_ACCOUNT` secret and Firestore access by creating and joining a room.
 - [ ] Add a GitHub CI/CD workflow for type checking, linting, and deployment.
 
 ---

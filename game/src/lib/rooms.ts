@@ -25,6 +25,7 @@ export interface GameViewPlayer {
   name: string;
   isHost: boolean;
   table: Card[];
+  tableOrder: Array<string | null>;
   hand: Card[];
   handCount: number;
   sets: Card[][];
@@ -126,7 +127,7 @@ export async function startRoom(roomCode: string): Promise<void> {
 
 export function sendGameCommand(
   roomCode: string,
-  action: 'draw' | 'play' | 'appeal' | 'discard' | 'endTurn' | 'resolve',
+  action: 'draw' | 'play' | 'appeal' | 'discard' | 'endTurn' | 'resolve' | 'reorder',
   payload: Record<string, unknown> = {}
 ): Promise<void> {
   return apiRequest({ action, roomCode, ...payload });

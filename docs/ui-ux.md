@@ -53,7 +53,8 @@
 
 ### 3.2 Lobby View (`/lobby/:code`)
 * Displays generated Room Code (with click-to-copy functionality).
-* Player list showing joined members with names and host indicator.
+* Player list showing joined members with distinct names and host indicator. Names are unique in a room, ignoring surrounding whitespace and letter case.
+* New players without a custom name are assigned the first available name in order: `Player 1`, `Player 2`, `Player 3`, and so on. Rejoining members retain their assigned name. A duplicate custom rename is rejected with clear feedback.
 * **Host Controls:** Kick member, rename room, start game.
 * **Member Controls:** Leave room, rename self.
 * Real-time updates when players join/leave.
@@ -63,7 +64,7 @@
 * **Current Player Area:** split into two zones, laid out responsively by device orientation:
   * **Landscape:** Table on the left, Hand on the right.
   * **Portrait:** Table on top, Hand on bottom.
-  * **Table:** 3×3 grid, max 9 cards (Normal + TEAL), drag/drop rearrangement, each card showing Revealed/Concealed state with the eye-icon indicator where applicable.
+  * **Table:** 3×3 grid, max 9 cards (Normal + TEAL), rearrangeable at any time by both drag-and-drop and tap-to-select/tap-to-destination, each card showing Revealed/Concealed state with the eye-icon indicator where applicable.
   * **Hand:** scrollable row of Action cards, no fixed maximum.
 * **Center Area:**
   * Draw Deck (compact size, face down, shows remaining count)
@@ -89,6 +90,7 @@
 3. Tap the same selected slot again to cancel the move.
 4. **Drag-and-Drop:** Drag a Table card and drop onto another Table slot to swap/move.
 5. Both methods work at any time (equivalent availability), allowing arrangement outside of a specific phase.
+6. The changed Table order is saved through the authoritative game API and synchronized to the room without consuming a turn action. A rejected save restores the last server-confirmed order and displays an error.
 
 ### 4.2 Action Card Targeting
 1. Play an action card (CONCEAL/STEAL/REVEAL) from Hand.
@@ -115,9 +117,10 @@
 
 ### 4.4 Turn Transitions
 * Smooth visual transition between phases.
-* Clear indicator of whose turn it is.
+* Clear indicator of whether it is **your** turn or another player's turn; never rely on names alone to identify the active player. If legacy room data contains duplicate names, explicitly indicate that the active player is another account with that name.
 * Draw animation when drawing a card.
 * Discard animation when discarding.
+* Every server-bound action immediately shows a pending state (for example, “Submitting move…”), prevents duplicate submission of that action, and then shows confirmation when accepted or a clear error if rejected. When an action is waiting on another player or a server timer, explain that wait separately from request submission.
 
 ---
 
@@ -147,7 +150,9 @@ Layout is primarily driven by **viewport orientation** (see 3.3's Table/Hand spl
 | Card Components (Normal, Action, Slot) | ⚠️ Needs Update (add TEAL/Wild card visual + badge) |
 | Table Grid Layout (3×3) | ⚠️ Needs Update (was "Hand Grid" — now scoped to Table only) |
 | Hand Layout (unlimited, Action cards) | ❌ Not Started (new zone) |
-| Card Rearrangement (Drag-and-Drop + Tap-to-Move) | ✅ Implemented (rescope to Table) |
+| Card Rearrangement (Drag-and-Drop + Tap-to-Move) | ✅ Implemented (server-persisted Table slot order) |
+| Unique Lobby Player Names and Numbered Defaults | ✅ Implemented |
+| Pending / Confirmed / Failed Server Action Feedback | ✅ Implemented |
 | Card Glow Effect / Revealed Eye Icon | ⚠️ Needs Update (add eye icon) |
 | Hamburger Menu (Rules, Players) | ⚠️ Needs Update (Players page: Table/Hand counts) |
 | Game Board Layout (responsive Table/Hand split) | ❌ Not Started |
