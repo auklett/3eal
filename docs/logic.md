@@ -30,13 +30,21 @@ interface Card {
 ```typescript
 interface Player {
   id: string;
-  name: string;
+  name: string; // Unique within a room, compared after trimming and case folding
   isHost: boolean;
   table: Card[]; // NORMAL + WILD cards only, max 9
   hand: Card[];  // ACTION cards only, unlimited
   sets: Card[][]; // Derived, win-moment only: a valid partition into 3 sets, populated once a win is detected — see §5
 }
 ```
+
+### 1.3 Lobby Display Names
+
+- Every room has distinct player names, compared case-insensitively after trimming whitespace.
+- New players without a custom name receive the first available default in the sequence `Player 1`, `Player 2`, `Player 3`, and so on.
+- A returning member keeps their existing name rather than receiving a new default.
+- An explicit rename to a name already used in that room is rejected with a clear message; the current name remains unchanged.
+- Name uniqueness is enforced by the server inside the room transaction so concurrent joins cannot create duplicates.
 
 ### 1.3 Lobby & Game State Schema
 ```typescript
@@ -170,6 +178,10 @@ A set of 3 Table cards is valid if it meets **at least one** of these patterns:
   - `findBestPartition()` is only ever called once, at the moment `checkWinCondition()` returns true, purely to populate `sets: Card[][]` for the winning reveal animation. Any valid partition is correct to show — there's no wrong answer to tie-break at that point either.
 
 ## 6. Implementation Files
+
+Table-card arrangement is presentation order only: a player may move or swap their own Table cards at any time using tap-to-select/tap-to-destination or drag-and-drop. Reordering does not consume a turn action or change card ownership, reveal state, or game rules. The authoritative room state remains the source of the order shown to all players.
+
+Client commands should provide immediate pending feedback while waiting on the authoritative server response, then show a confirmed result or a recoverable error. A pending indicator acknowledges that a request was sent; it must not claim that the state has already changed.
 
 | File | Purpose |
 |------|---------|

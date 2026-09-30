@@ -5,8 +5,8 @@
 * **Frontend:** React 19.2.8 with TypeScript 6.0.2
 * **Build Tool:** Vite 8.2.0
 * **Styling:** Tailwind CSS 4.3.3
-* **Backend & Realtime State:** Firebase (Firestore / Realtime Database & Firebase Anonymous Auth) - *Planned for Phase 3*
-* **Hosting:** Cloudflare Pages - *Planned for Phase 3*
+* **Backend & Realtime State:** Firebase Authentication (anonymous sign-in) and Cloud Firestore, with authoritative writes through Cloudflare Pages Functions
+* **Hosting:** Cloudflare Pages (static Vite app and Pages Functions)
 * **Version Control:** GitHub
 * **Linting:** OxLint 1.75.0
 
@@ -21,21 +21,21 @@ game/
 │   │   ├── cards/         # NormalCard, ActionCard, CardSlot
 │   │   ├── game/          # Board, Hand, DiscardPile, ActionOverlay
 │   │   └── lobby/         # PlayerList, CodeInput
-│   ├── hooks/             # useGameEngine, useFirebaseLobby (planned)
 │   ├── logic/             # Deck creation, pattern validation, action triggers
 │   │   ├── deck.ts        # Card generation and shuffling
 │   │   ├── validation.ts  # Set validation and win condition checking
 │   │   └── gameEngine.ts  # Game state machine and action handlers
 │   ├── types/             # TypeScript schemas (Card, Player, RoomState)
 │   │   └── index.ts       # All type definitions
-│   ├── pages/             # GameBoard and page components
+│   ├── pages/             # Home, Lobby, and Game Board views
+│   ├── lib/               # Firebase initialization and room/game API subscriptions
 │   ├── App.tsx            # Main application entry
-│   └── App.css            # Global styles
-├── public/                # Static assets
-├── package.json           # Dependencies and scripts
-├── vite.config.ts         # Vite configuration
-├── tsconfig.json          # TypeScript configuration
-└── tailwind.config.js     # Tailwind CSS configuration
+│   └── index.css           # Global styles
+├── functions/             # Cloudflare Pages API
+├── firestore.rules        # Client access controls
+├── firebase.json          # Emulator configuration
+├── wrangler.toml          # Pages configuration
+└── package.json           # Dependencies and scripts
 ```
 
 ---
@@ -49,11 +49,13 @@ game/
 
 ---
 
-## 4. Implementation Considerations from Rules/Logic v2
+## 4. Current Architecture
 
-The core stack doesn't need to change — Firebase (Firestore/RTDB), already planned for Phase 3, comfortably handles the updated rules. Two specifics worth designing for from the start rather than retrofitting later:
-
-* **Atomic Appeal Resolution:** CONCEAL can now have multiple eligible responders, all racing to play APPEAL within the same 30-second window. Resolve `pendingAction.resolvedByPlayerId` inside a Firestore (or RTDB) transaction so two near-simultaneous writes can't both "win" — the first committed transaction wins, and any later attempt reads the already-set field and fails cleanly instead of double-resolving the action.
-* **Server-Trusted Timing:** The 30-second Interrupt window and its auto-skip-if-nobody-appeals behavior should be judged server-side (e.g. a scheduled check or a Cloud Function on write) rather than left to any individual client's clock, so a laggy or clock-skewed client can't extend or shorten the window for everyone else.
+* **Authoritative state:** Cloudflare Pages Functions verify Firebase ID tokens and use Firestore REST transactions for room and game mutations. Server-side game state keeps the deck, hands, and concealed card identities private.
+* **Realtime views:** Firestore publishes lobby metadata and sanitized per-player game views. Clients cannot write Firestore documents directly; private game state is not readable from the client.
+* **Local development:** Firebase Auth and Firestore emulators run with the same project ID as the client and Pages Function configuration.
+* **Room identity:** The API enforces case-insensitive unique names inside each room and allocates numbered `Player N` defaults to joining players.
+* **Presentation order:** Table card arrangement is cosmetic; tap-to-move and pointer drag-and-drop update the persisted slot order through the authoritative API without changing game state.
+* **Latency feedback:** The UI reports when a server-bound request is submitted, accepted, or rejected. Firestore subscriptions deliver the resulting state separately from the command response.
 
 No new dependencies are implied by either of these — just two things to build correctly the first time given Firebase's transaction primitives.

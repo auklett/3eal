@@ -24,15 +24,17 @@ For the complete rules and card details, see [`docs/rules.md`](docs/rules.md).
 - Set validation and partition search, including TEAL wild cards
 - Game Board with Table and Hand, card selection, server-validated action targeting, and player/rules menus
 - Home screen with room-code entry, room creation, and Rules access
-- Live Firebase Lobby with room creation/joining, roster updates, player and room renaming, host kick, leave, host handoff, and host start
+- Live Firebase Lobby with unique player names, numbered defaults, room creation/joining, roster updates, player and room renaming, host kick, leave, host handoff, and host start
 - Firebase anonymous authentication for lobby player identity
 - Server-authoritative game state and mutation API hosted in Cloudflare Pages Functions
+- Table-card rearrangement by tap or drag, with server-persisted room order
+- Immediate pending, accepted, and failed feedback for server-bound game actions
 - Per-player sanitized Firestore game views; the canonical deck, hands, and concealed card identities are server-only
 - Client-denying Firestore rules configured and exercised in the local emulator
 
-### Not yet implemented
+### Remaining work
 
-Production Firestore rules have **not** been deployed, and the Cloudflare Pages site has **not** been deployed. Configure the Pages service-account secret before enabling the API in production. Automated test suites and active-game player departure/host-change handling also remain. See [`docs/roadmap.md`](docs/roadmap.md).
+Production Firestore rules and Cloudflare Pages bindings still need to be verified. Automated test suites and active-game player departure/host-change handling also remain. See [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Quick start
 
@@ -77,6 +79,27 @@ npm run pages:dev
 ```
 
 Provide the public Firebase web-app values in the ignored `game/.env.local` file above. Open the Pages dev URL printed by Wrangler (normally **http://localhost:8788**). `npm run dev` runs Vite alone and does not serve the Pages API.
+
+### Cloudflare Pages deployment
+
+The Cloudflare Pages project builds from `game/` with `npm run build` and publishes `dist/`. Pages Functions are in `game/functions/`.
+
+Configure the public Firebase web-app values (`VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_STORAGE_BUCKET`, `VITE_FIREBASE_MESSAGING_SENDER_ID`, and `VITE_FIREBASE_APP_ID`) as Cloudflare **build variables** in each environment that should use Firebase. `VITE_` values are embedded in the browser bundle during the build and are not secrets.
+
+Set `FIREBASE_PROJECT_ID` as a Pages Function runtime variable. Add `FIREBASE_SERVICE_ACCOUNT` as an encrypted **secret** binding containing the complete JSON key for a dedicated service account granted only the Cloud Datastore User role (`roles/datastore.user`). Do not put the service-account JSON in source control, `wrangler.toml`, a build variable, or any `VITE_` variable. Redeploy after changing build variables or Function secrets so the new deployment uses the configuration.
+
+The browser can read lobby metadata and only its own sanitized `rooms/{roomCode}/views/{uid}` game document. The authoritative deck, hands, and concealed card identities are stored in `rooms/{roomCode}/private/state`; client Firestore rules should deny direct access to that state and deny client writes. Game and lobby mutations pass through the Pages Functions API, which uses Firestore REST transactions. The API verifies Firebase ID tokens against Google's public signing certificates.
+
+`game/firestore.rules` is connected to `game/firebase.json` for local emulator testing. Verify and deploy the reviewed rules to the production Firebase project separately.
+
+For local development, start Firebase emulators with the same project ID used by `.env.local` and `.dev.vars`:
+
+```bash
+cd game
+npx firebase-tools emulators:start --project eal-5d762 --only auth,firestore
+```
+
+Without `--project`, the Firebase CLI can select `demo-no-project`, causing sign-in tokens to be rejected when the configured project is `eal-5d762`.
 
 ### Available scripts
 
@@ -132,6 +155,7 @@ See [`docs/tech-stack.md`](docs/tech-stack.md) for architecture details.
 
 ## Documentation
 
+- This README contains local setup and deployment guidance.
 - [`docs/rules.md`](docs/rules.md) — Objective, cards, setup, valid sets, turns, and actions
 - [`docs/logic.md`](docs/logic.md) — Data schemas, engine behavior, deck, and validation
 - [`docs/ui-ux.md`](docs/ui-ux.md) — Views, design system, and interaction requirements
