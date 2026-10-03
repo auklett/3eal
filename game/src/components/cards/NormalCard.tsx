@@ -20,12 +20,11 @@ export default function NormalCard({ card, onClick, isSelectable = false, isSele
       <div
         onClick={onClick}
         aria-label="TEAL wild card"
-        className={`relative flex h-[112px] w-[80px] items-center justify-center rounded-xl border-2 border-dashed border-white shadow-md transition-all ${isSelectable ? 'cursor-pointer hover:scale-105' : ''}`}
+        role="img"
+        className={`relative flex h-[112px] w-[80px] items-center justify-center rounded-xl shadow-md transition-all ${isSelectable ? 'cursor-pointer hover:scale-105' : ''}`}
         style={{ backgroundColor, ...(isGlowing ? { boxShadow: `0 0 0 4px ${glowColor}` } : {}) }}
       >
-        <span className="absolute right-1 top-0 text-xl text-white" aria-hidden="true">✦</span>
-        <span className="text-4xl text-black" aria-hidden="true">✦</span>
-        <span className="sr-only">TEAL wild card</span>
+        <span className="text-xl font-bold text-black" aria-hidden="true">TEAL</span>
       </div>
     );
   }

@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
-import GameBoard from './pages/GameBoard';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import HomePage from './pages/HomePage';
-import LobbyPage from './pages/LobbyPage';
 import RulesOverlay from './components/game/RulesOverlay';
-import { createRoom } from './lib/rooms';
 import './App.css';
+
+const GameBoard = lazy(() => import('./pages/GameBoard'));
+const LobbyPage = lazy(() => import('./pages/LobbyPage'));
 
 type Route =
   | { page: 'home' }
@@ -42,24 +42,33 @@ function App() {
   );
   const handleRenameRoom = useCallback((code: string) => navigate(`/lobby/${code}`), [navigate]);
   const handleOpenLobby = useCallback((roomCode: string) => navigate(`/lobby/${roomCode}`), [navigate]);
+  const handleReturnToLobby = useCallback((roomCode: string) => {
+    window.location.assign(`/lobby/${roomCode}`);
+  }, []);
 
   if (route.page === 'lobby') {
     return (
-      <LobbyPage
-        roomCode={route.roomCode}
-        onLeave={handleLeaveRoom}
-        onRenameRoom={handleRenameRoom}
-        onStartGame={handleStartGame}
-      />
+      <Suspense fallback={<main className="min-h-screen bg-black p-8 text-center text-white" role="status">Loading room…</main>}>
+        <LobbyPage
+          roomCode={route.roomCode}
+          onLeave={handleLeaveRoom}
+          onRenameRoom={handleRenameRoom}
+          onStartGame={handleStartGame}
+        />
+      </Suspense>
     );
   }
 
   if (route.page === 'game') {
     return (
-      <GameBoard
-        key={route.roomCode}
-        roomCode={route.roomCode}
-      />
+      <Suspense fallback={<main className="min-h-screen bg-black p-8 text-center text-white" role="status">Loading game…</main>}>
+        <GameBoard
+          key={route.roomCode}
+          roomCode={route.roomCode}
+          onLeave={handleLeaveRoom}
+          onReturnToLobby={() => handleReturnToLobby(route.roomCode)}
+        />
+      </Suspense>
     );
   }
 
@@ -67,7 +76,10 @@ function App() {
     <>
       <HomePage
         onJoinRoom={handleOpenLobby}
-        onCreateRoom={() => createRoom(sessionStorage.getItem('3eal-player-name') ?? 'Player 1')}
+        onCreateRoom={async () => {
+          const { createRoom } = await import('./lib/rooms');
+          return createRoom(sessionStorage.getItem('3eal-player-name') ?? 'Player 1');
+        }}
         onRules={() => setShowRules(true)}
       />
       {showRules && <RulesOverlay onClose={() => setShowRules(false)} />}

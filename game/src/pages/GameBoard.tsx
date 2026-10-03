@@ -3,6 +3,9 @@ import type { ActionType, Card, Player } from '../types';
 import { completeSetCount } from '../logic/validation';
 import {
   ensurePlayerId,
+  isRoomMember,
+  kickPlayer,
+  leaveRoom,
   sendGameCommand,
   subscribeToPlayerView,
   type GameViewPlayer,
@@ -30,10 +33,10 @@ const disabledButtonStyle: React.CSSProperties = {
   cursor: 'not-allowed'
 };
 
-function tableSlots(player: Pick<GameViewPlayer, 'table' | 'tableOrder'>): Array<string | null> {
+function tableSlots(player: Pick<GameViewPlayer, 'table'>, preferredOrder: Array<string | null> = []): Array<string | null> {
   const cards = new Set(player.table.map((card) => card.id));
   const slots = Array.from({ length: Math.max(9, player.table.length) }, (_, index) => {
-    const id = player.tableOrder?.[index];
+    const id = preferredOrder[index];
     return id && cards.has(id) ? id : null;
   });
   const included = new Set(slots.filter((id): id is string => id !== null));
@@ -48,10 +51,15 @@ function tableSlots(player: Pick<GameViewPlayer, 'table' | 'tableOrder'>): Array
 
 interface GameBoardProps {
   roomCode: string;
+  onLeave: () => void;
+  onReturnToLobby: () => void;
 }
 
-export default function GameBoard({ roomCode }: GameBoardProps) {
+export default function GameBoard({ roomCode, onLeave, onReturnToLobby }: GameBoardProps) {
   const [view, setView] = useState<PlayerGameView | null>(null);
+  const [localTableOrder, setLocalTableOrder] = useState<Array<string | null>>([]);
+  const [dragPreview, setDragPreview] = useState<{ card: Card; x: number; y: number } | null>(null);
+  const [dropSlotIndex, setDropSlotIndex] = useState<number | null>(null);
   const [selection, setSelection] = useState<{ zone: Zone; cardId: string } | null>(null);
   const [pendingActionType, setPendingActionType] = useState<Exclude<ActionType, 'APPEAL'> | null>(null);
   const [message, setMessage] = useState('');
@@ -61,10 +69,13 @@ export default function GameBoard({ roomCode }: GameBoardProps) {
   const [appealDismissed, setAppealDismissed] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(30);
   const pendingCommandRef = useRef(false);
-  const dragRef = useRef<{ cardId: string; pointerId: number; x: number; y: number; started: boolean } | null>(null);
+  const dragRef = useRef<{ card: Card; zone: Zone; pointerId: number; x: number; y: number; started: boolean } | null>(null);
   const suppressClickRef = useRef(false);
+  const autoDrawTurnRef = useRef('');
   const pendingResolution = useRef('');
   const nextResolutionAttempt = useRef(0);
+  const pendingTablePlacement = useRef<{ cardId: string; targetIndex: number } | null>(null);
+  const viewRef = useRef<PlayerGameView | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -76,12 +87,25 @@ export default function GameBoard({ roomCode }: GameBoardProps) {
         id,
         (nextView) => {
           if (!mounted) return;
+          viewRef.current = nextView;
           setView(nextView);
           if (nextView?.pendingAction) setAppealDismissed(false);
           if (!nextView) setError('Your private game view is not available. Return to the lobby and ask the host to start the game.');
         },
         (subscriptionError) => {
-          if (mounted) setError(subscriptionError.message);
+          if (!mounted) return;
+          void isRoomMember(roomCode).then((isMember) => {
+            if (!mounted) return;
+            if (!isMember) {
+              onLeave();
+              return;
+            }
+            setError(subscriptionError.message);
+          }).catch((membershipError: unknown) => {
+            if (mounted) {
+              setError(membershipError instanceof Error ? membershipError.message : subscriptionError.message);
+            }
+          });
         }
       ).then((stop) => {
         if (mounted) unsubscribe = stop;
@@ -94,10 +118,10 @@ export default function GameBoard({ roomCode }: GameBoardProps) {
       mounted = false;
       unsubscribe?.();
     };
-  }, [roomCode]);
+  }, [roomCode, onLeave]);
 
   const send = useCallback(async (
-    action: 'draw' | 'play' | 'appeal' | 'discard' | 'endTurn' | 'resolve' | 'reorder',
+    action: 'draw' | 'play' | 'appeal' | 'discard' | 'moveToTable' | 'moveToHand' | 'endTurn' | 'resolve',
     payload: Record<string, unknown> = {}
   ) => {
     if (pendingCommandRef.current) return false;
@@ -105,7 +129,7 @@ export default function GameBoard({ roomCode }: GameBoardProps) {
     setPendingCommand(action);
     setError('');
     if (action !== 'resolve') {
-      const label = action === 'reorder' ? 'Table arrangement' : action === 'endTurn' ? 'End turn' : action[0].toUpperCase() + action.slice(1);
+      const label = action === 'endTurn' ? 'End turn' : action[0].toUpperCase() + action.slice(1);
       setMessage(`${label} sent. Waiting for the server…`);
     }
     try {
@@ -163,31 +187,140 @@ export default function GameBoard({ roomCode }: GameBoardProps) {
     : undefined;
   const isMyTurn = Boolean(view && view.activePlayerId === view.selfId && !view.winnerId);
   const appealCard = view?.canAppeal ? self?.hand.find((card) => card.actionType === 'APPEAL') : undefined;
+  const selfTable = self?.table;
+  const actionReady = isMyTurn && view?.turnPhase === 'MAIN';
 
-  const runCommand = (action: 'draw' | 'appeal' | 'discard' | 'endTurn', payload: Record<string, unknown> = {}) => {
+  useEffect(() => {
+    if (!self || !view || view.winnerId || view.turnPhase !== 'DRAW' || view.activePlayerId !== view.selfId) return;
+    const turnKey = `${view.selfId}:${view.activePlayerId}:${view.turnNumber}`;
+    if (autoDrawTurnRef.current === turnKey) return;
+    autoDrawTurnRef.current = turnKey;
+    void send('draw').then((drawn) => {
+      if (!drawn) setMessage('Automatic draw failed. Check the error above and reload to retry.');
+    });
+  }, [pendingCommand, self, send, view]);
+
+  useEffect(() => {
+    if (!selfTable) return;
+    const normalized = tableSlots({ table: selfTable }, localTableOrder);
+    if (normalized.some((id, index) => id !== localTableOrder[index]) || normalized.length !== localTableOrder.length) {
+      setLocalTableOrder(normalized);
+    }
+  }, [selfTable, localTableOrder]);
+
+  useEffect(() => {
+    const placement = pendingTablePlacement.current;
+    if (!selfTable || !placement || !selfTable.some((card) => card.id === placement.cardId)) return;
+    setLocalTableOrder((currentOrder) => {
+      const slots = tableSlots({ table: selfTable }, currentOrder);
+      const cardIndex = slots.indexOf(placement.cardId);
+      if (cardIndex < 0) return slots;
+      slots.splice(cardIndex, 1);
+      slots.splice(placement.targetIndex, 0, placement.cardId);
+      return slots.slice(0, Math.max(9, selfTable.length));
+    });
+    pendingTablePlacement.current = null;
+  }, [selfTable]);
+
+  const runCommand = (action: 'appeal' | 'endTurn', payload: Record<string, unknown> = {}) => {
     if (pendingCommandRef.current) return;
     void send(action, payload);
     setSelection(null);
   };
 
   const moveTableCard = useCallback((cardId: string, targetIndex: number) => {
-    if (!self || pendingCommandRef.current) return;
-    const slots = tableSlots(self);
+    if (!self) return;
+    const slots = tableSlots(self, localTableOrder);
     const sourceIndex = slots.indexOf(cardId);
     if (sourceIndex < 0 || targetIndex < 0 || targetIndex >= slots.length || sourceIndex === targetIndex) return;
     const nextSlots = [...slots];
     nextSlots[sourceIndex] = slots[targetIndex];
     nextSlots[targetIndex] = cardId;
-    void send('reorder', { tableOrder: nextSlots }).then((saved) => {
-      if (saved) setSelection(null);
+    setLocalTableOrder(nextSlots);
+    setSelection(null);
+  }, [self, localTableOrder]);
+
+  const moveHandCardToTable = useCallback((cardId: string, targetIndex: number, replaceCardId?: string) => {
+    if (!actionReady) return;
+    void send('moveToTable', {
+      cardId,
+      ...(replaceCardId ? { replaceCardId } : {})
+    }).then((moved) => {
+      if (!moved) return;
+      setSelection(null);
+      pendingTablePlacement.current = { cardId, targetIndex };
+      const latestView = viewRef.current;
+      const latestSelf = latestView?.players[latestView.selfId];
+      if (latestSelf?.table.some((card) => card.id === cardId)) {
+        setLocalTableOrder((currentOrder) => {
+          const slots = tableSlots(latestSelf, currentOrder);
+          const cardIndex = slots.indexOf(cardId);
+          if (cardIndex < 0) return slots;
+          slots.splice(cardIndex, 1);
+          slots.splice(targetIndex, 0, cardId);
+          return slots.slice(0, Math.max(9, latestSelf.table.length));
+        });
+        pendingTablePlacement.current = null;
+      }
     });
-  }, [self, send]);
+  }, [actionReady, send]);
+
+  const moveTableCardToHand = useCallback((cardId: string) => {
+    if (!actionReady) return;
+    void send('moveToHand', { cardId }).then((moved) => {
+      if (moved) setSelection(null);
+    });
+  }, [actionReady, send]);
+
+  const beginCardDrag = (event: React.PointerEvent<HTMLButtonElement>, zone: Zone, cardId: string) => {
+    if (event.button !== 0 || pendingCommandRef.current) return;
+    const card = zone === 'table'
+      ? self?.table.find((tableCard) => tableCard.id === cardId)
+      : self?.hand.find((handCard) => handCard.id === cardId);
+    if (!card || (zone === 'hand' && (!actionReady || card.category === 'ACTION'))) return;
+    dragRef.current = { card, zone, pointerId: event.pointerId, x: event.clientX, y: event.clientY, started: false };
+  };
+
+  const handleLeaveGame = async () => {
+    if (pendingCommandRef.current) return;
+    pendingCommandRef.current = true;
+    setPendingCommand('leave');
+    try {
+      await leaveRoom(roomCode);
+      onLeave();
+    } catch (leaveError) {
+      setError(leaveError instanceof Error ? leaveError.message : 'Could not leave the game.');
+    } finally {
+      pendingCommandRef.current = false;
+      setPendingCommand(null);
+    }
+  };
+
+  const handleKickPlayer = async (playerId: string) => {
+    if (pendingCommandRef.current) return;
+    pendingCommandRef.current = true;
+    setPendingCommand('kick');
+    try {
+      await kickPlayer(roomCode, playerId);
+      setMessage('Player removed from the game.');
+    } catch (kickError) {
+      setError(kickError instanceof Error ? kickError.message : 'Could not remove the player.');
+    } finally {
+      pendingCommandRef.current = false;
+      setPendingCommand(null);
+    }
+  };
 
   const handleTableSlotClick = (slotIndex: number) => {
     if (suppressClickRef.current || !self || pendingCommandRef.current) return;
-    const slots = tableSlots(self);
+    const slots = tableSlots(self, localTableOrder);
     const movingId = selection?.zone === 'table' ? selection.cardId : null;
     const tappedId = slots[slotIndex];
+    if (selection?.zone === 'hand' && handSelection && handSelection.category !== 'ACTION' && actionReady) {
+      if (self.table.length >= 9 && tappedId) moveHandCardToTable(handSelection.id, slotIndex, tappedId);
+      else if (self.table.length < 9) moveHandCardToTable(handSelection.id, slotIndex);
+      return;
+    }
     if (!movingId) {
       setSelection(tappedId ? { zone: 'table', cardId: tappedId } : null);
       return;
@@ -206,8 +339,13 @@ export default function GameBoard({ roomCode }: GameBoardProps) {
       if (!drag.started && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 8) return;
       if (!drag.started) {
         drag.started = true;
-        setDraggingCardId(drag.cardId);
+        setDraggingCardId(drag.card.id);
       }
+      setDragPreview({ card: drag.card, x: event.clientX, y: event.clientY });
+      const slotTarget = document.elementFromPoint(event.clientX, event.clientY)
+        ?.closest<HTMLElement>('[data-table-slot]');
+      const targetIndex = slotTarget ? Number(slotTarget.dataset.tableSlot) : NaN;
+      setDropSlotIndex(Number.isInteger(targetIndex) ? targetIndex : null);
       event.preventDefault();
     };
     const finishPointer = (event: PointerEvent, cancelled = false) => {
@@ -215,12 +353,28 @@ export default function GameBoard({ roomCode }: GameBoardProps) {
       if (!drag || drag.pointerId !== event.pointerId) return;
       dragRef.current = null;
       setDraggingCardId(null);
+      setDragPreview(null);
+      setDropSlotIndex(null);
       if (!cancelled && drag.started) {
-        const target = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-table-slot]');
-        const targetIndex = Number(target?.dataset.tableSlot);
-        if (target && Number.isInteger(targetIndex)) moveTableCard(drag.cardId, targetIndex);
+        const dropTarget = document.elementFromPoint(event.clientX, event.clientY);
+        const tableTarget = dropTarget?.closest<HTMLElement>('[data-table-slot]');
+        if (drag.zone === 'table' && tableTarget) {
+          const targetIndex = Number(tableTarget.dataset.tableSlot);
+          if (Number.isInteger(targetIndex)) moveTableCard(drag.card.id, targetIndex);
+        } else if (drag.zone === 'hand' && tableTarget && self) {
+          const targetIndex = Number(tableTarget.dataset.tableSlot);
+          const slots = tableSlots(self, localTableOrder);
+          const targetId = slots[targetIndex];
+          if (Number.isInteger(targetIndex) && self.table.length >= 9 && targetId) {
+            moveHandCardToTable(drag.card.id, targetIndex, targetId);
+          } else if (Number.isInteger(targetIndex) && self.table.length < 9) {
+            moveHandCardToTable(drag.card.id, targetIndex);
+          }
+        } else if (drag.zone === 'table' && dropTarget?.closest('[data-hand-zone]')) {
+          moveTableCardToHand(drag.card.id);
+        }
         suppressClickRef.current = true;
-        window.requestAnimationFrame(() => { suppressClickRef.current = false; });
+        window.setTimeout(() => { suppressClickRef.current = false; }, 100);
       }
     };
     const handlePointerUp = (event: PointerEvent) => finishPointer(event);
@@ -233,7 +387,7 @@ export default function GameBoard({ roomCode }: GameBoardProps) {
       window.removeEventListener('pointerup', handlePointerUp);
       window.removeEventListener('pointercancel', handlePointerCancel);
     };
-  }, [moveTableCard]);
+  }, [localTableOrder, moveHandCardToTable, moveTableCard, moveTableCardToHand, self]);
 
   const handlePlay = () => {
     if (!handSelection || handSelection.category !== 'ACTION' || !handSelection.actionType) return;
@@ -259,6 +413,7 @@ export default function GameBoard({ roomCode }: GameBoardProps) {
   };
 
   const handleCardClick = (zone: Zone, card: Card) => {
+    if (suppressClickRef.current || pendingCommandRef.current) return;
     if (zone === 'hand' && !isMyTurn) return;
     if (selection?.zone === zone && selection.cardId === card.id) setSelection(null);
     else setSelection({ zone, cardId: card.id });
@@ -266,19 +421,24 @@ export default function GameBoard({ roomCode }: GameBoardProps) {
 
   if (!view || !self || !activePlayer) {
     return (
-      <main className="min-h-screen bg-black p-8 text-center text-white">
+      <main className="flex min-h-screen flex-col items-center justify-center gap-5 bg-black p-8 text-center text-white">
         <p role={error ? 'alert' : 'status'}>{error || 'Connecting to the authoritative game…'}</p>
+        {error && <button type="button" style={buttonStyle} onClick={onLeave}>Return Home</button>}
       </main>
     );
   }
 
   const exposedPlayers = Object.values(players) as Player[];
   const exposedSelf = self as Player;
-  const actionReady = isMyTurn && view.turnPhase === 'MAIN';
-
   return (
     <main className="min-h-screen bg-black px-4 pb-10 pt-3 text-white sm:px-6">
-      <HamburgerMenu players={exposedPlayers} />
+      <HamburgerMenu
+        players={Object.values(players)}
+        selfId={view.selfId}
+        roomCode={roomCode}
+        onLeaveGame={() => void handleLeaveGame()}
+        onKickPlayer={(playerId) => void handleKickPlayer(playerId)}
+      />
       <header className="mb-5 flex items-center justify-center">
         <div className="text-center">
           <h1 className="m-0 text-4xl font-bold tracking-wide text-white">3EAL</h1>
@@ -336,26 +496,23 @@ export default function GameBoard({ roomCode }: GameBoardProps) {
             Your Table ({self.table.length}/9)
           </h2>
           <div className="mx-auto grid w-fit grid-cols-3 gap-3">
-            {tableSlots(self).map((cardId, index) => {
+            {tableSlots(self, localTableOrder).map((cardId, index) => {
               const card = cardId ? self.table.find((tableCard) => tableCard.id === cardId) : undefined;
               return card ? (
                 <button
                   key={`table-slot-${index}`}
                   type="button"
                   data-table-slot={index}
-                  disabled={pendingCommand !== null}
                   onClick={() => handleTableSlotClick(index)}
                   onPointerDown={(event) => {
-                    if (event.button !== 0 || pendingCommandRef.current) return;
-                    dragRef.current = { cardId: card.id, pointerId: event.pointerId, x: event.clientX, y: event.clientY, started: false };
-                    event.currentTarget.setPointerCapture(event.pointerId);
+                    beginCardDrag(event, 'table', card.id);
                   }}
-                  className="touch-none cursor-grab rounded-xl active:cursor-grabbing disabled:cursor-wait"
+                  className={`touch-none cursor-grab rounded-xl active:cursor-grabbing ${draggingCardId === card.id ? 'opacity-30' : ''} ${dropSlotIndex === index ? 'ring-2 ring-teal-300' : ''}`}
                   aria-label={`Your ${card.category === 'WILD' ? 'TEAL wild' : 'Table'} card${card.isRevealed ? ', revealed' : ', concealed'}. Tap to select and tap another slot to move, or drag to move.`}
                 >
                   <CardComponent
                     card={card}
-                    isSelectable={pendingCommand === null}
+                    isSelectable
                     isSelected={selection?.zone === 'table' && selection.cardId === card.id}
                     isDragging={draggingCardId === card.id}
                   />
@@ -364,9 +521,8 @@ export default function GameBoard({ roomCode }: GameBoardProps) {
                 key={`table-slot-${index}`}
                 type="button"
                 data-table-slot={index}
-                disabled={pendingCommand !== null}
                 onClick={() => handleTableSlotClick(index)}
-                className="h-[112px] w-[80px] touch-none rounded-xl border border-dashed border-white/10 disabled:cursor-wait"
+                className={`h-[112px] w-[80px] touch-none rounded-xl border border-dashed border-white/10 ${dropSlotIndex === index ? 'border-teal-300 ring-2 ring-teal-300' : ''}`}
                 aria-label={`Empty Table slot ${index + 1}. Tap here to move the selected card.`}
               />;
             })}
@@ -374,42 +530,78 @@ export default function GameBoard({ roomCode }: GameBoardProps) {
         </div>
         <div className="min-w-0 flex-1">
           <h2 className="mb-3 text-center text-xl font-semibold">Your Hand ({self.hand.length})</h2>
-          {self.hand.length === 0
-            ? <p className="py-5 text-center text-white/60">No Action cards in Hand yet.</p>
-            : <div className="flex flex-wrap justify-center gap-3 p-2">
-              {self.hand.map((card) => (
+          {actionReady && (
+            <p className="mb-2 text-center text-sm text-amber-200" role="note">
+              Any cards left in your Hand, including Action cards, are discarded at the end of your turn. To discard a Table card, move it to your Hand.
+            </p>
+          )}
+          <div data-hand-zone className="flex min-h-32 flex-wrap justify-center gap-3 rounded-xl border border-dashed border-white/10 p-2">
+            {self.hand.length === 0
+              ? <p className="w-full self-center py-5 text-center text-white/60">No cards in Hand yet.</p>
+              : self.hand.map((card) => (
                 <button
                   key={card.id}
                   type="button"
                   disabled={!actionReady || pendingCommand !== null}
                   onClick={() => handleCardClick('hand', card)}
-                  className="cursor-pointer rounded-xl disabled:cursor-default"
-                  aria-label={`${card.title ?? card.actionType ?? 'Action'} action card`}
+                  onPointerDown={(event) => beginCardDrag(event, 'hand', card.id)}
+                  className={`touch-none cursor-pointer rounded-xl disabled:cursor-default ${draggingCardId === card.id ? 'opacity-30' : ''}`}
+                  aria-label={card.category === 'ACTION'
+                    ? `${card.title ?? card.actionType ?? 'Action'} action card`
+                    : `${card.category === 'WILD' ? 'TEAL wild' : 'Normal'} card in Hand`}
                 >
-                  <CardComponent card={card} isSelectable={actionReady} isSelected={selection?.zone === 'hand' && selection.cardId === card.id} />
+                  <CardComponent
+                    card={card}
+                    isSelectable={actionReady}
+                    isSelected={selection?.zone === 'hand' && selection.cardId === card.id}
+                    isDragging={draggingCardId === card.id}
+                  />
                 </button>
               ))}
-            </div>}
+          </div>
         </div>
       </section>
 
       <section className="mx-auto mb-6 flex max-w-6xl flex-wrap justify-center gap-3" aria-label="Turn controls">
         {view.turnPhase === 'DRAW' && isMyTurn && (
-          <button type="button" style={pendingCommand ? disabledButtonStyle : buttonStyle} disabled={pendingCommand !== null} onClick={() => runCommand('draw')}>
-            {pendingCommand === 'draw' ? 'Drawing…' : 'Draw Card'}
-          </button>
+          <p className="w-full text-center text-sm text-teal-100" role="status">Drawing your card…</p>
         )}
         {actionReady && (
           <>
             <button type="button" style={handSelection?.category === 'ACTION' ? buttonStyle : disabledButtonStyle}
               disabled={handSelection?.category !== 'ACTION' || pendingCommand !== null} onClick={handlePlay}>Play Selected</button>
-            <button type="button" style={tableSelection ? buttonStyle : disabledButtonStyle}
-              disabled={!tableSelection || pendingCommand !== null} onClick={() => tableSelection && runCommand('discard', { cardId: tableSelection.id })}>Discard Selected</button>
+            {handSelection && handSelection.category !== 'ACTION' && (
+              <button
+                type="button"
+                style={self.table.length < 9 || tableSelection ? buttonStyle : disabledButtonStyle}
+                disabled={pendingCommand !== null || (self.table.length >= 9 && !tableSelection)}
+                onClick={() => {
+                  const slots = tableSlots(self, localTableOrder);
+                  const targetIndex = self.table.length >= 9
+                    ? slots.findIndex((slotId) => slotId === tableSelection?.id)
+                    : slots.indexOf(null);
+                  if (targetIndex >= 0) {
+                    moveHandCardToTable(
+                      handSelection.id,
+                      targetIndex,
+                      self.table.length >= 9 ? tableSelection?.id : undefined
+                    );
+                  }
+                }}
+                >
+                {self.table.length >= 9 ? 'Swap with Selected Table Card' : 'Move Selected to Table'}
+              </button>
+            )}
+            {tableSelection && (
+              <button type="button" style={buttonStyle}
+                disabled={pendingCommand !== null}
+                onClick={() => moveTableCardToHand(tableSelection.id)}>Move Selected to Hand</button>
+            )}
             <button type="button" style={self.table.length <= 9 ? buttonStyle : disabledButtonStyle}
               disabled={self.table.length > 9 || pendingCommand !== null} onClick={() => runCommand('endTurn')}>
               {pendingCommand === 'endTurn' ? 'Ending Turn…' : 'End Turn'}
             </button>
-            {self.table.length > 9 && <p className="w-full text-center text-yellow-200">Discard down to 9 Table cards before ending your turn.</p>}
+            {self.table.length > 9 && <p className="w-full text-center text-yellow-200">Move cards to your Hand to discard them at turn end, then end your turn.</p>}
           </>
         )}
       </section>
@@ -466,11 +658,34 @@ export default function GameBoard({ roomCode }: GameBoardProps) {
       )}
 
       {view.winnerId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-6 text-center" role="alert">
-          <div className="rounded-2xl border border-white bg-neutral-950 p-10">
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/90 p-6 text-center" role="alert">
+          <div className="my-auto max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-white bg-neutral-950 p-6 sm:p-10">
             <h2 className="mb-3 text-4xl font-bold">Game Over!</h2>
-            <p className="text-2xl">{players[view.winnerId]?.name} wins!</p>
+            <p className="mb-6 text-2xl">{players[view.winnerId]?.name} wins!</p>
+            <h3 className="mb-3 text-xl font-semibold">Winning sets</h3>
+            <div className="space-y-4">
+              {(players[view.winnerId]?.sets ?? []).map((set, index) => (
+                <section key={`winning-set-${index}`} className="rounded-xl border border-white/20 p-4">
+                  <h4 className="mb-3 font-semibold">Set {index + 1}</h4>
+                  <div className="flex flex-wrap justify-center gap-3">
+                    {set.cards.map((card) => <CardComponent key={card.id} card={card} />)}
+                  </div>
+                </section>
+              ))}
+            </div>
+            <button type="button" style={buttonStyle} className="mt-6" onClick={onReturnToLobby}>
+              Return to Lobby
+            </button>
           </div>
+        </div>
+      )}
+      {dragPreview && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none fixed z-[100] -translate-x-1/2 -translate-y-1/2"
+          style={{ left: dragPreview.x, top: dragPreview.y }}
+        >
+          <CardComponent card={dragPreview.card} isDragging />
         </div>
       )}
     </main>

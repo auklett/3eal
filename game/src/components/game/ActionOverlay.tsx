@@ -37,7 +37,7 @@ export default function ActionOverlay({ actionType, sourcePlayer, players, onCon
         const enabled = actionType === 'CONCEAL'
           ? card.isRevealed
           : actionType === 'STEAL'
-            ? card.category === 'NORMAL'
+            ? card.category !== 'ACTION'
             : !card.isRevealed;
         const visibleFace = isSelfTarget || card.isRevealed;
 
@@ -84,7 +84,7 @@ export default function ActionOverlay({ actionType, sourcePlayer, players, onCon
       <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-white p-6 text-center"
         style={{ backgroundColor: '#111111' }}>
         <h2 id="action-overlay-title" className="mb-3 text-2xl font-bold text-white">
-          {actionType} — Select Target
+          {actionType}: Select Target
         </h2>
 
         {!isSelfTarget && !selectedOpponent && (

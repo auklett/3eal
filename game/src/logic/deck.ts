@@ -12,7 +12,7 @@ const ACTION_DETAILS: Record<ActionType, { title: string; description: string }>
   },
   STEAL: {
     title: 'STEAL',
-    description: 'Take a normal card from an opponent\'s table'
+    description: 'Take a Normal or TEAL card from an opponent\'s table'
   },
   REVEAL: {
     title: 'REVEAL',

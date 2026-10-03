@@ -1,6 +1,5 @@
 import type { ActionType, Card, GameState, Player, RoomState } from '../../src/types';
-import { drawCard, endTurn, initializeGame, playAppeal, playCard, resolveAction } from '../../src/logic/gameEngine';
-import { findBestPartition } from '../../src/logic/validation';
+import { drawCard, endTurn, initializeGame, moveCardToHand, moveCardToTable, playAppeal, playCard, resolveAction } from '../../src/logic/gameEngine';
 
 interface Env {
   FIREBASE_PROJECT_ID: string;
@@ -53,7 +52,6 @@ interface PendingView {
 interface PlayerView extends Omit<Player, 'hand'> {
   hand: Card[];
   handCount: number;
-  tableOrder: Array<string | null>;
 }
 
 interface GameView {
@@ -72,7 +70,6 @@ interface GameView {
 interface PrivateState extends RoomState {
   playerOrder: string[];
   targetRefs: Record<string, Record<string, string>>;
-  tableOrder?: Record<string, Array<string | null>>;
 }
 
 interface Write {
@@ -493,23 +490,6 @@ function playerRecords(room: Record<string, unknown>): Record<string, RoomPlayer
   return room.players as Record<string, RoomPlayer>;
 }
 
-function tableOrderFor(state: PrivateState, player: Player): Array<string | null> {
-  const currentIds = new Set(player.table.map((card) => card.id));
-  const savedOrder = state.tableOrder?.[player.id] ?? player.table.map((card) => card.id);
-  const slots = Array.from({ length: Math.max(9, player.table.length) }, (_, index) => {
-    const id = savedOrder[index];
-    return id && currentIds.has(id) ? id : null;
-  });
-  const included = new Set(slots.filter((id): id is string => id !== null));
-  for (const card of player.table) {
-    if (included.has(card.id)) continue;
-    const emptyIndex = slots.indexOf(null);
-    if (emptyIndex >= 0) slots[emptyIndex] = card.id;
-    else slots.push(card.id);
-  }
-  return slots;
-}
-
 function createState(roomCode: string, room: Record<string, unknown>): PrivateState {
   const members = Object.values(playerRecords(room)).sort((a, b) => a.joinedAt - b.joinedAt);
   if (members.length < 2) throw new ApiError('At least two players are required to start.');
@@ -526,7 +506,7 @@ function createState(roomCode: string, room: Record<string, unknown>): PrivateSt
     }
   ]));
   const game = initializeGame(Object.values(players));
-  return { roomCode, status: 'IN_GAME', hostId: String(room.hostId), players, game, playerOrder: members.map((player) => player.id), targetRefs: {}, tableOrder: {} };
+  return { roomCode, status: 'IN_GAME', hostId: String(room.hostId), players, game, playerOrder: members.map((player) => player.id), targetRefs: {} };
 }
 
 function projectView(state: PrivateState, selfId: string): GameView {
@@ -535,7 +515,8 @@ function projectView(state: PrivateState, selfId: string): GameView {
   for (const player of Object.values(state.players)) {
     const cardViewIds = new Map<string, string>();
     const table = player.table.map((card) => {
-      if (player.id === selfId || card.isRevealed) {
+      const publiclyRevealedForWinner = state.game?.winnerId === player.id;
+      if (player.id === selfId || publiclyRevealedForWinner || card.isRevealed) {
         cardViewIds.set(card.id, card.id);
         return { ...card };
       }
@@ -544,17 +525,17 @@ function projectView(state: PrivateState, selfId: string): GameView {
       cardViewIds.set(card.id, ref);
       return { id: ref, category: 'NORMAL', isRevealed: false } as Card;
     });
-    const tableOrder = tableOrderFor(state, player).map((id) => id === null ? null : cardViewIds.get(id) ?? null);
     const isSelf = player.id === selfId;
     players[player.id] = {
       id: player.id,
       name: player.name,
       isHost: player.isHost,
       table,
-      tableOrder,
       hand: isSelf ? player.hand.map((card) => ({ ...card })) : [],
       handCount: player.hand.length,
-      sets: isSelf ? player.sets.map((set) => set.map((card) => ({ ...card }))) : []
+      sets: isSelf || state.game?.winnerId === player.id
+        ? player.sets.map((set) => ({ cards: set.cards.map((card) => ({ ...card })) }))
+        : []
     };
   }
   state.targetRefs[selfId] = targetRefs;
@@ -567,6 +548,7 @@ function projectView(state: PrivateState, selfId: string): GameView {
     deckCount: state.game?.deck.length ?? 0,
     discardPile: state.game?.discardPile.map((card) => ({ ...card })) ?? [],
     activePlayerId: state.game?.activePlayerId ?? '',
+    turnNumber: state.game?.turnNumber ?? 0,
     turnPhase: state.game?.turnPhase ?? 'DRAW',
     pendingAction: pending ? {
       actionType: pending.actionType,
@@ -630,7 +612,6 @@ async function mutateGame(env: Env, code: string, actorId: string, body: Record<
     membership(room, actorId);
     if (room.status !== 'IN_GAME' || !rawState) throw new ApiError('This game is not active.', 409);
     const state = rawState as unknown as PrivateState;
-    state.tableOrder ??= {};
     const game = state.game;
     if (!game) throw new ApiError('This game is not active.', 409);
     const now = Date.now();
@@ -642,27 +623,21 @@ async function mutateGame(env: Env, code: string, actorId: string, body: Record<
       if (!expired) throw new ApiError('The interrupt window is still open.', 409);
     } else if (expired) {
       return { writes: stateWrites(env, state), result: true };
-    } else if (action === 'reorder') {
-      const player = state.players[actorId];
-      const requestedOrder = body.tableOrder;
-      const expectedLength = Math.max(9, player.table.length);
-      if (!Array.isArray(requestedOrder) || requestedOrder.length !== expectedLength) {
-        throw new ApiError('The Table layout is out of date. Refresh and try again.', 409);
-      }
-      const cardIds = new Set(player.table.map((card) => card.id));
-      const seen = new Set<string>();
-      for (const slot of requestedOrder) {
-        if (slot === null) continue;
-        if (typeof slot !== 'string' || !cardIds.has(slot) || seen.has(slot)) {
-          throw new ApiError('The Table layout contains an invalid card.', 400);
-        }
-        seen.add(slot);
-      }
-      if (seen.size !== cardIds.size) throw new ApiError('The Table layout is missing a card.', 400);
-      state.tableOrder[actorId] = requestedOrder as Array<string | null>;
     } else if (action === 'draw') {
       const player = assertActive(state, actorId, 'DRAW');
       drawCard(game, player);
+    } else if (action === 'moveToTable') {
+      const player = assertActive(state, actorId, 'MAIN');
+      if (typeof body.cardId !== 'string') throw new ApiError('Choose a Normal or TEAL card from your Hand.');
+      const replaceCardId = body.replaceCardId;
+      if (replaceCardId !== undefined && typeof replaceCardId !== 'string') {
+        throw new ApiError('Choose a valid Table card to swap.');
+      }
+      moveCardToTable(game, player, body.cardId, replaceCardId);
+    } else if (action === 'moveToHand') {
+      const player = assertActive(state, actorId, 'MAIN');
+      if (typeof body.cardId !== 'string') throw new ApiError('Choose a card from your Table.');
+      moveCardToHand(game, player, body.cardId);
     } else if (action === 'discard') {
       const player = assertActive(state, actorId, 'MAIN');
       const cardId = body.cardId;
@@ -684,8 +659,8 @@ async function mutateGame(env: Env, code: string, actorId: string, body: Record<
       const target = state.players[targetPlayerId];
       const targetCard = target.table.find((tableCard) => tableCard.id === targetCardId);
       if (!targetCard) throw new ApiError('That card is no longer on the target Table.', 409);
-      if (card.actionType === 'STEAL' && targetCard.category !== 'NORMAL') {
-        throw new ApiError('STEAL can only target a normal card.');
+      if (card.actionType === 'STEAL' && targetCard.category === 'ACTION') {
+        throw new ApiError('STEAL can only target a Normal or TEAL card.');
       }
       playCard(game, player, cardId, targetPlayerId, targetCardId, state.players);
       if (game.pendingAction) {
@@ -708,15 +683,13 @@ async function mutateGame(env: Env, code: string, actorId: string, body: Record<
     } else if (action === 'endTurn') {
       const player = assertActive(state, actorId, 'MAIN');
       if (player.table.length > 9) throw new ApiError('Discard Table cards until you have no more than 9.');
-      if (player.table.length === 9 && findBestPartition(player.table) === null) {
-        throw new ApiError('Your nine Table cards do not form three valid sets.');
-      }
       const result = endTurn(game, player);
       if (result.winnerId) {
         room.status = 'FINISHED';
       } else {
         const index = state.playerOrder.indexOf(actorId);
         game.activePlayerId = state.playerOrder[(index + 1) % state.playerOrder.length];
+        game.turnNumber = (game.turnNumber ?? 0) + 1;
         game.turnPhase = 'DRAW';
       }
     } else {
@@ -779,6 +752,14 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (!validRoomCode(roomCode)) throw new ApiError('Invalid room code.');
   const code = roomCode;
 
+  if (body.action === 'checkMembership') {
+    const isMember = await transact(env, [roomPath(code)], ([room]) => ({
+      writes: [],
+      result: Boolean(room && (room.players as Record<string, RoomPlayer> | undefined)?.[actorId])
+    }));
+    return response({ member: isMember });
+  }
+
   if (body.action === 'join') {
     const requestedName = cleanName(body.name);
     await transact(env, [roomPath(code)], ([room]) => {
@@ -836,9 +817,68 @@ async function route(request: Request, env: Env): Promise<Response> {
   }
 
   if (body.action === 'renamePlayer' || body.action === 'kick' || body.action === 'leave') {
-    await transact(env, [roomPath(code)], ([room]) => {
+    const isRemoval = body.action === 'kick' || body.action === 'leave';
+    await transact(env, isRemoval ? [roomPath(code), privatePath(code)] : [roomPath(code)], ([room, privateData]) => {
       membership(room, actorId);
       const players = playerRecords(room);
+      if ((room.status === 'IN_GAME' || room.status === 'FINISHED') && isRemoval) {
+        const state = privateData as unknown as PrivateState | null;
+        if (!state?.game) throw new ApiError('The active game state is unavailable.', 409);
+        let targetId = actorId;
+        if (body.action === 'kick') {
+          targetId = typeof body.playerId === 'string' ? body.playerId : '';
+          if (room.hostId !== actorId) throw new ApiError('Only the host can remove a player.', 403);
+          if (!targetId || targetId === actorId || !players[targetId]) {
+            throw new ApiError('That player cannot be removed.');
+          }
+        }
+
+        const removed = state.players[targetId];
+        const playerOrderIndex = state.playerOrder.indexOf(targetId);
+        if (!removed || playerOrderIndex < 0) throw new ApiError('That player is not part of the active game.', 409);
+        state.game.discardPile.push(...removed.table, ...removed.hand);
+        const pending = state.game.pendingAction;
+        if (pending && (pending.sourcePlayerId === targetId || pending.targetPlayerId === targetId)) {
+          state.game.discardPile.push(pending.actionCard);
+          state.game.pendingAction = undefined;
+          state.game.turnPhase = 'MAIN';
+        }
+
+        const previousActivePlayerId = state.game.activePlayerId;
+        delete state.players[targetId];
+        delete state.targetRefs[targetId];
+        state.playerOrder = state.playerOrder.filter((id) => id !== targetId);
+        const remaining = Object.fromEntries(Object.entries(players).filter(([id]) => id !== targetId));
+        if (state.playerOrder.length === 0) {
+          return {
+            writes: [
+              deleteWrite(env, roomPath(code)),
+              deleteWrite(env, privatePath(code)),
+              ...Object.keys(players).map((id) => deleteWrite(env, viewPath(code, id)))
+            ],
+            result: undefined
+          };
+        }
+
+        const nextHost = room.hostId === targetId
+          ? Object.values(remaining).sort((a, b) => a.joinedAt - b.joinedAt)[0].id
+          : room.hostId;
+        for (const player of Object.values(state.players)) {
+          player.isHost = player.id === nextHost;
+        }
+        if (room.status === 'IN_GAME' && previousActivePlayerId === targetId) {
+          state.game.activePlayerId = state.playerOrder[Math.min(playerOrderIndex, state.playerOrder.length - 1)];
+          if (!state.game.winnerId) state.game.turnPhase = 'DRAW';
+        }
+        return {
+          writes: [
+            setWrite(env, roomPath(code), { players: remaining, hostId: nextHost }, ['players', 'hostId']),
+            ...stateWrites(env, state),
+            deleteWrite(env, viewPath(code, targetId))
+          ],
+          result: undefined
+        };
+      }
       if (room.status !== 'LOBBY') throw new ApiError('Lobby changes are disabled after the game starts.', 409);
       if (body.action === 'renamePlayer') {
         const name = cleanName(body.name);
@@ -876,7 +916,7 @@ async function route(request: Request, env: Env): Promise<Response> {
     return response({ ok: true });
   }
 
-  if (['draw', 'play', 'appeal', 'discard', 'endTurn', 'resolve', 'reorder'].includes(String(body.action))) {
+  if (['draw', 'play', 'appeal', 'discard', 'moveToTable', 'moveToHand', 'endTurn', 'resolve'].includes(String(body.action))) {
     await mutateGame(env, code, actorId, body);
     return response({ ok: true });
   }

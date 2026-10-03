@@ -8,7 +8,7 @@
 * **Backend & Realtime State:** Firebase Authentication (anonymous sign-in) and Cloud Firestore, with authoritative writes through Cloudflare Pages Functions
 * **Hosting:** Cloudflare Pages (static Vite app and Pages Functions)
 * **Version Control:** GitHub
-* **Linting:** OxLint 1.75.0
+* **Quality Checks:** OxLint, TypeScript/Vite build, Vitest, and GitHub Actions CI
 
 ---
 
@@ -19,9 +19,8 @@ game/
 ├── src/
 │   ├── components/
 │   │   ├── cards/         # NormalCard, ActionCard, CardSlot
-│   │   ├── game/          # Board, Hand, DiscardPile, ActionOverlay
-│   │   └── lobby/         # PlayerList, CodeInput
-│   ├── logic/             # Deck creation, pattern validation, action triggers
+│   │   └── game/          # Action targeting, menus, and rules
+│   ├── logic/             # Deck creation, pattern validation, turn/action engine
 │   │   ├── deck.ts        # Card generation and shuffling
 │   │   ├── validation.ts  # Set validation and win condition checking
 │   │   └── gameEngine.ts  # Game state machine and action handlers
@@ -46,6 +45,7 @@ game/
 * `npm run build` - Build for production (TypeScript compile + Vite build)
 * `npm run preview` - Preview production build locally
 * `npm run lint` - Run OxLint for code quality checks
+* `npm test` - Run game-engine unit tests
 
 ---
 
@@ -55,7 +55,11 @@ game/
 * **Realtime views:** Firestore publishes lobby metadata and sanitized per-player game views. Clients cannot write Firestore documents directly; private game state is not readable from the client.
 * **Local development:** Firebase Auth and Firestore emulators run with the same project ID as the client and Pages Function configuration.
 * **Room identity:** The API enforces case-insensitive unique names inside each room and allocates numbered `Player N` defaults to joining players.
-* **Presentation order:** Table card arrangement is cosmetic; tap-to-move and pointer drag-and-drop update the persisted slot order through the authoritative API without changing game state.
+* **Card movement:** Table rearrangement is local-only presentation state. It does not call the server and does not change the order opponents see. Hand-to-Table moves and swaps are game actions and are validated by the authoritative API.
+* **Draw and cleanup:** Each turn draws automatically into Hand. Normal/TEAL cards can be placed or swapped onto the Table during Main; all cards left in Hand at turn end are discarded automatically.
 * **Latency feedback:** The UI reports when a server-bound request is submitted, accepted, or rejected. Firestore subscriptions deliver the resulting state separately from the command response.
+* **Winner persistence:** Winning sets are serialized as objects containing card arrays, avoiding Firestore's prohibition on nested arrays.
+* **Active-game membership:** Leaving or host removal discards that player's cards, updates turn order and host identity, and refreshes sanitized views. A lone remaining member may continue.
+* **Bundle loading:** Home is kept independent of Firebase; Lobby and Game Board are lazy-loaded to defer game code until needed.
 
-No new dependencies are implied by either of these — just two things to build correctly the first time given Firebase's transaction primitives.
+Production Firebase rules and Cloudflare Pages runtime bindings still require deployment verification. The CI workflow runs tests, lint, and build but does not deploy.

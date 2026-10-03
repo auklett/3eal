@@ -4,11 +4,15 @@ import { completeSetCount } from '../../logic/validation';
 import RulesOverlay from './RulesOverlay';
 
 interface HamburgerMenuProps {
-  players: Array<Pick<Player, 'id' | 'name' | 'hand' | 'table' | 'isHost'>>;
+  players: Array<Pick<Player, 'id' | 'name' | 'hand' | 'table' | 'isHost'> & { handCount?: number }>;
+  selfId: string;
+  roomCode: string;
+  onLeaveGame: () => void;
+  onKickPlayer: (playerId: string) => void;
   onClose?: () => void;
 }
 
-export default function HamburgerMenu({ players, onClose }: HamburgerMenuProps) {
+export default function HamburgerMenu({ players, selfId, roomCode, onLeaveGame, onKickPlayer, onClose }: HamburgerMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [showRules, setShowRules] = useState(false);
   const [showPlayers, setShowPlayers] = useState(false);
@@ -196,6 +200,12 @@ export default function HamburgerMenu({ players, onClose }: HamburgerMenuProps) 
               >
                 Players
               </button>
+              <button
+                onClick={onLeaveGame}
+                style={{ ...menuButtonStyle, borderColor: '#FDA4AF', color: '#FDA4AF' }}
+              >
+                Leave Game
+              </button>
             </div>
           </div>
 
@@ -264,7 +274,7 @@ export default function HamburgerMenu({ players, onClose }: HamburgerMenuProps) 
               <div className="space-y-4">
                 {players.map((player) => {
                   const tableCount = player.table.filter((c) => c !== null).length;
-                  const handCount = player.hand.filter((c) => c !== null).length;
+                  const handCount = player.handCount ?? player.hand.length;
                   return (
                     <div
                       key={player.id}
@@ -283,6 +293,16 @@ export default function HamburgerMenu({ players, onClose }: HamburgerMenuProps) 
                       <p className="mt-2 text-sm text-white/70">
                         Completed sets: {completeSetCount(player.table)}/3
                       </p>
+                      {players.some((member) => member.id === selfId && member.isHost) && player.id !== selfId && (
+                        <button
+                          type="button"
+                          onClick={() => onKickPlayer(player.id)}
+                          aria-label={`Remove ${player.name} from the game in room ${roomCode}`}
+                          className="mt-3 min-h-11 rounded-lg border border-rose-300/70 px-3 text-sm text-rose-200 hover:bg-rose-300/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-300"
+                        >
+                          Remove from game
+                        </button>
+                      )}
                     </div>
                   );
                 })}

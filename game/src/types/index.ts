@@ -23,7 +23,7 @@ export type Player = {
   isHost: boolean;
   table: Card[];
   hand: Card[];
-  sets: Card[][];
+  sets: Array<{ cards: Card[] }>;
 };
 
 export type TurnPhase = 'DRAW' | 'MAIN' | 'INTERRUPT';
@@ -44,6 +44,7 @@ export type GameState = {
   deck: Card[];
   discardPile: Card[];
   activePlayerId: string;
+  turnNumber?: number;
   turnPhase: TurnPhase;
   pendingAction?: PendingAction;
   winnerId: string | null;
