@@ -104,6 +104,7 @@ export default function LobbyPage({ roomCode, onStartGame, onLeave, onRenameRoom
   }, [roomCode, onLeave, onStartGame]);
 
   const isHost = room?.hostId === playerId;
+  const isLobbyOpen = room?.status === 'LOBBY';
   const players = useMemo(
     () => Object.values(room?.players ?? {}).sort((a, b) => a.joinedAt - b.joinedAt),
     [room?.players]
@@ -177,7 +178,9 @@ export default function LobbyPage({ roomCode, onStartGame, onLeave, onRenameRoom
           <div className="mb-7 flex flex-wrap items-start justify-between gap-4">
             <div>
               <h2 className="mb-2 text-2xl font-bold text-white">Lobby</h2>
-              <p className="text-sm text-white/70">{room?.status === 'IN_GAME' ? 'Game in progress' : 'Waiting for players'}</p>
+              <p className="text-sm text-white/70">
+                {room?.status === 'IN_GAME' ? 'Game in progress' : room?.status === 'FINISHED' ? 'Game finished' : 'Waiting for players'}
+              </p>
             </div>
             <div className="text-right">
               <p className="mb-2 text-sm text-white/70">Room Code</p>
@@ -211,7 +214,7 @@ export default function LobbyPage({ roomCode, onStartGame, onLeave, onRenameRoom
                     {room?.hostId === player.id && (
                       <span className="rounded-full border border-teal-300 px-3 py-1 text-sm text-teal-100">Host</span>
                     )}
-                    {isHost && player.id !== playerId && (
+                    {isHost && isLobbyOpen && player.id !== playerId && (
                       <button
                         type="button"
                         disabled={busyAction !== null}
@@ -239,13 +242,13 @@ export default function LobbyPage({ roomCode, onStartGame, onLeave, onRenameRoom
                   onKeyDown={(event) => event.key === 'Enter' && void savePlayerName()}
                   className="min-h-11 min-w-0 flex-1 rounded-lg border border-white/30 bg-black px-3 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-400"
                 />
-                <button type="button" style={buttonStyle} disabled={busyAction !== null} onClick={() => void savePlayerName()}>
+                <button type="button" style={buttonStyle} disabled={busyAction !== null || !isLobbyOpen} onClick={() => void savePlayerName()}>
                   Save Name
                 </button>
               </div>
             </label>
 
-            {isHost && (
+            {isHost && isLobbyOpen && (
               <label className="block">
                 <span className="mb-2 block text-sm text-white/80">Rename room</span>
                 <div className="flex flex-wrap gap-2">
@@ -262,7 +265,7 @@ export default function LobbyPage({ roomCode, onStartGame, onLeave, onRenameRoom
               </label>
             )}
 
-            {isHost && (
+            {isHost && isLobbyOpen && (
               <>
                 <button
                   type="button"
@@ -275,7 +278,9 @@ export default function LobbyPage({ roomCode, onStartGame, onLeave, onRenameRoom
                 {players.length < 2 && <p className="text-center text-sm text-white/60">At least two players must join before the game can start.</p>}
               </>
             )}
-            {!isHost && <p className="text-center text-sm text-white/70">Waiting for the host to start the game.</p>}
+            {room?.status === 'FINISHED'
+              ? <p className="text-center text-sm text-white/70">This game has finished. You can leave this room when you are ready.</p>
+              : !isHost && <p className="text-center text-sm text-white/70">Waiting for the host to start the game.</p>}
           </div>
           {error && <p className="mt-4 text-center text-sm text-rose-300" role="alert">{error}</p>}
           {notice && <p className="mt-4 text-center text-sm text-teal-100" role="status">{notice}</p>}

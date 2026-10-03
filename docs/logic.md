@@ -33,8 +33,8 @@ interface Player {
   name: string; // Unique within a room, compared after trimming and case folding
   isHost: boolean;
   table: Card[]; // NORMAL + WILD cards only, max 9
-  hand: Card[];  // ACTION cards only, unlimited
-  sets: Card[][]; // Derived, win-moment only: a valid partition into 3 sets, populated once a win is detected — see §5
+  hand: Card[];  // Private zone for drawn cards and Table cards pending discard
+  sets: Array<{ cards: Card[] }>; // Firestore-safe representation of the winning partition
 }
 ```
 
@@ -46,7 +46,7 @@ interface Player {
 - An explicit rename to a name already used in that room is rejected with a clear message; the current name remains unchanged.
 - Name uniqueness is enforced by the server inside the room transaction so concurrent joins cannot create duplicates.
 
-### 1.3 Lobby & Game State Schema
+### 1.4 Lobby & Game State Schema
 ```typescript
 interface RoomState {
   roomCode: string; // 4-6 alphanumeric random string
@@ -102,7 +102,7 @@ interface RoomState {
 4. **APPEAL** — Block an opponent's CONCEAL, STEAL, or REVEAL
 
 ### Wild Card:
-- **TEAL** — fixed Teal color (`008080`), flexible shape/number. Lives on the Table like a Normal card; never lives in Hand and is never "played" as an action.
+- **TEAL** — fixed Teal color (`008080`), flexible shape/number. Drawn into Hand first, then may be moved to the Table during Main; any TEAL left in Hand at turn end is discarded.
 
 ## 3. Action Handlers & Rules Engine
 
@@ -128,7 +128,7 @@ interface RoomState {
 - **Phase:** Played during MAIN phase, triggers INTERRUPT phase.
 
 ### 3.4 APPEAL
-- **Trigger:** During the INTERRUPT phase, by any player listed in `pendingAction.eligibleAppealPlayerIds`.
+- **Trigger:** During the INTERRUPT phase, by a player eligible under the action's targeting rule and holding an APPEAL card. Eligibility is checked against private server state and is not broadcast as a player list.
 - **Effect:** Cancels `pendingAction`; both the original action card and the APPEAL card move to the discard pile.
 - **Race Resolution:** If multiple eligible players attempt APPEAL (only possible for CONCEAL, which can have several eligible players), resolve via an atomic transaction — the first write wins and sets `pendingAction.resolvedByPlayerId`; subsequent attempts are rejected server-side.
 - **Window:** 30 seconds from `pendingAction` creation. If it elapses with no successful APPEAL, `pendingAction` resolves normally (skip) and `turnPhase` returns to `MAIN`.
@@ -142,12 +142,13 @@ interface RoomState {
 ## 4. Game Flow & Turn Phases
 
 ### Phase Sequence:
-1. **DRAW** — Active player draws 1 card from the deck (reshuffles discard pile if empty). NORMAL/WILD → Table. ACTION → Hand.
+1. **DRAW** — At the start of each turn, the active player automatically draws 1 card from the deck (reshuffling the discard pile if empty). Every card initially goes to Hand.
 2. **MAIN** — Player may, in any order, any number of times:
+   - Move Normal/WILD cards from Hand to an open Table slot; at 9 cards this swaps with a selected Table card and returns the replaced card to Hand.
    - Discard any number of Normal/WILD cards from their Table.
    - Play CONCEAL, STEAL, or REVEAL from their Hand — each triggers INTERRUPT.
 3. **INTERRUPT** — Eligible player(s) have 30 seconds to play APPEAL; if none do, the action resolves and phase returns to MAIN.
-4. **End Turn** — Player discards their Table down to a maximum of 9 cards (Hand has no limit); win condition is then checked against the Table.
+4. **End Turn** — All cards left in Hand are discarded automatically. If a STEAL left more than 9 cards on the Table, move cards into Hand to discard them. Check for a win, then pass the turn.
 
 ## 5. Win Condition Validation (Pattern Engine)
 
@@ -169,23 +170,25 @@ A set of 3 Table cards is valid if it meets **at least one** of these patterns:
 - **Shape:** Can adopt any shape to complete a pattern
 
 ### Validation Logic:
-- Only Table cards (Normal + WILD) are ever considered; Action cards in Hand are structurally excluded, not filtered.
+- Only Table cards (Normal + WILD) are ever considered; Action cards and unplaced Normal/WILD cards in Hand are excluded.
 - Requires exactly 3 cards per set, and exactly 3 disjoint sets covering all 9 Table cards to win.
 - Checks all 3 patterns — any single match validates a set.
 - **Resolved (previously an open question):** earlier drafts worried about a tie-break for "the" completed set when multiple valid groupings exist. That question only mattered for *protecting* set cards from STEAL — and since STEAL can already target any Table card regardless of set membership (rules.md §9), there's nothing left to protect, so no tie-break is needed for correctness.
   - `checkWinCondition()` only needs to confirm *some* valid partition of the 9 Table cards into 3 sets exists — an existence check, not an identification of specific groupings.
   - Mid-game progress display (e.g. "2/3 sets" on the Players page) only needs a count — `completeSetCount()` finds the maximum number of disjoint valid sets in the current Table via a greedy/max-matching search. Which exact cards land in which set doesn't need to be pinned down until the win moment.
-  - `findBestPartition()` is only ever called once, at the moment `checkWinCondition()` returns true, purely to populate `sets: Card[][]` for the winning reveal animation. Any valid partition is correct to show — there's no wrong answer to tie-break at that point either.
+  - `findBestPartition()` identifies a winning partition. It is stored as an array of `{ cards: Card[] }` objects because Firestore does not support nested arrays.
 
 ## 6. Implementation Files
 
-Table-card arrangement is presentation order only: a player may move or swap their own Table cards at any time using tap-to-select/tap-to-destination or drag-and-drop. Reordering does not consume a turn action or change card ownership, reveal state, or game rules. The authoritative room state remains the source of the order shown to all players.
+Table-card arrangement is presentation order only: a player may move or swap their own Table cards at any time using tap-to-select/tap-to-destination or drag-and-drop. The order is local to that browser and never calls the server or changes what opponents see.
 
 Client commands should provide immediate pending feedback while waiting on the authoritative server response, then show a confirmed result or a recoverable error. A pending indicator acknowledges that a request was sent; it must not claim that the state has already changed.
+
+Active-game leave and host-kick operations transactionally discard the departing player's cards, remove their sanitized view, and hand host status to the earliest remaining member. If the departing player was active, the next remaining member starts a DRAW phase. A single remaining player may continue; removing the final member deletes the room and private state.
 
 | File | Purpose |
 |------|---------|
 | `src/logic/deck.ts` | Deck generation (105 Normal + 3 WILD + 12 Action), shuffling |
 | `src/logic/validation.ts` | `validateSet()`, `findBestPartition()`, `checkWinCondition()`, pattern matchers |
-| `src/logic/gameEngine.ts` | State machine: `initializeGame`, `drawCard`, `playCard`, `resolveAction`, `playAppeal` (atomic), `endTurn` |
+| `src/logic/gameEngine.ts` | State machine: `initializeGame`, `drawCard`, `moveCardToTable`, `playCard`, `resolveAction`, `playAppeal` (atomic), `endTurn` |
 | `src/types/index.ts` | All TypeScript type definitions |

@@ -25,10 +25,9 @@ export interface GameViewPlayer {
   name: string;
   isHost: boolean;
   table: Card[];
-  tableOrder: Array<string | null>;
   hand: Card[];
   handCount: number;
-  sets: Card[][];
+  sets: Array<{ cards: Card[] }>;
 }
 
 export interface PlayerGameView {
@@ -38,6 +37,7 @@ export interface PlayerGameView {
   deckCount: number;
   discardPile: Card[];
   activePlayerId: string;
+  turnNumber: number;
   turnPhase: TurnPhase;
   pendingAction?: {
     actionType: Exclude<ActionType, 'APPEAL'>;
@@ -117,6 +117,11 @@ export async function leaveRoom(roomCode: string): Promise<void> {
   await apiRequest({ action: 'leave', roomCode });
 }
 
+export async function isRoomMember(roomCode: string): Promise<boolean> {
+  const result = await apiRequest<{ member: boolean }>({ action: 'checkMembership', roomCode });
+  return result.member;
+}
+
 export async function renameRoom(roomCode: string, newRoomCode: string): Promise<void> {
   await apiRequest({ action: 'renameRoom', roomCode, newRoomCode });
 }
@@ -127,7 +132,7 @@ export async function startRoom(roomCode: string): Promise<void> {
 
 export function sendGameCommand(
   roomCode: string,
-  action: 'draw' | 'play' | 'appeal' | 'discard' | 'endTurn' | 'resolve' | 'reorder',
+  action: 'draw' | 'play' | 'appeal' | 'discard' | 'moveToTable' | 'moveToHand' | 'endTurn' | 'resolve',
   payload: Record<string, unknown> = {}
 ): Promise<void> {
   return apiRequest({ action, roomCode, ...payload });

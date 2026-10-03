@@ -27,6 +27,7 @@ export function initializeGame(players: Player[]): GameState {
     deck,
     discardPile: [],
     activePlayerId: players[Math.floor(Math.random() * players.length)].id,
+    turnNumber: 0,
     turnPhase: 'DRAW',
     winnerId: null
   };
@@ -43,13 +44,45 @@ export function drawCard(game: GameState, player: Player): { game: GameState; pl
   const card = game.deck.pop();
   if (!card) throw new Error('There are no cards available to draw');
 
-  if (card.category === 'ACTION') {
-    player.hand.push(card);
-  } else {
-    player.table.push(card);
-  }
+  player.hand.push(card);
 
   game.turnPhase = 'MAIN';
+  return { game, player };
+}
+
+export function moveCardToTable(
+  game: GameState,
+  player: Player,
+  cardId: string,
+  replaceCardId?: string
+): { game: GameState; player: Player } {
+  if (game.turnPhase !== 'MAIN') throw new Error('Cannot move a card outside of MAIN phase');
+  const handIndex = player.hand.findIndex((card) => card.id === cardId);
+  const card = player.hand[handIndex];
+  if (handIndex < 0 || card.category === 'ACTION') {
+    throw new Error('Only Normal and TEAL cards can be moved from your Hand to your Table');
+  }
+
+  if (player.table.length >= 9) {
+    if (!replaceCardId) throw new Error('Choose a Table card to swap with');
+    const tableIndex = player.table.findIndex((tableCard) => tableCard.id === replaceCardId);
+    if (tableIndex < 0) throw new Error('The selected card is not on your Table');
+    player.hand[handIndex] = player.table[tableIndex];
+    player.table[tableIndex] = card;
+  } else {
+    if (replaceCardId) throw new Error('A Table card can only be swapped when your Table has 9 cards');
+    player.table.push(card);
+    player.hand.splice(handIndex, 1);
+  }
+
+  return { game, player };
+}
+
+export function moveCardToHand(game: GameState, player: Player, cardId: string): { game: GameState; player: Player } {
+  if (game.turnPhase !== 'MAIN') throw new Error('Cannot move a card outside of MAIN phase');
+  const tableIndex = player.table.findIndex((card) => card.id === cardId);
+  if (tableIndex < 0) throw new Error('That card is not on your Table');
+  player.hand.push(player.table.splice(tableIndex, 1)[0]);
   return { game, player };
 }
 
@@ -198,9 +231,12 @@ export function endTurn(
   if (game.turnPhase !== 'MAIN') throw new Error('Cannot end turn outside of MAIN phase');
   if (player.table.length > 9) throw new Error('Discard Table cards until you have no more than 9');
 
+  game.discardPile.push(...player.hand);
+  player.hand = [];
+
   if (player.table.length === 9 && checkWinCondition(player.table)) {
     game.winnerId = player.id;
-    player.sets = findBestPartition(player.table) ?? [];
+    player.sets = (findBestPartition(player.table) ?? []).map((cards) => ({ cards }));
     return { game, player, winnerId: player.id };
   }
 

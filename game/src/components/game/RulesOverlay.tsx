@@ -36,7 +36,7 @@ export default function RulesOverlay({ onClose }: RulesOverlayProps) {
           </section>
           <section>
             <h3 className="mb-2 text-xl font-bold">Zones and cards</h3>
-            <p>The Table holds up to 9 Normal and TEAL cards. Your Hand holds Action cards and has no size limit. Table cards start Concealed; only you can see their faces until Revealed.</p>
+            <p>The Table normally holds up to 9 Normal and TEAL cards. Your Hand has no size limit and holds drawn cards plus cards moved off the Table for discard. Table cards start Concealed; only you can see their faces until Revealed.</p>
             <p className="mt-2">The 120-card deck has 105 Normal cards, 3 TEAL wild cards, and 12 Action cards (3 each of CONCEAL, STEAL, REVEAL, and APPEAL).</p>
           </section>
           <section>
@@ -46,10 +46,10 @@ export default function RulesOverlay({ onClose }: RulesOverlayProps) {
           <section>
             <h3 className="mb-2 text-xl font-bold">Turn flow</h3>
             <ol className="list-inside list-decimal space-y-2">
-              <li>Draw one card: Normal/TEAL goes to your Table; Action goes to your Hand.</li>
-              <li>During Main, discard Table cards or play CONCEAL, STEAL, or REVEAL actions in any order.</li>
+              <li>The game automatically draws one card into your Hand at turn start. During Main, move Normal/TEAL cards to an open Table slot; with 9 Table cards, swap with a selected card.</li>
+              <li>During Main, move Table cards into your Hand to discard them at turn end, or play CONCEAL, STEAL, or REVEAL actions.</li>
               <li>Eligible players may APPEAL during the 30-second interrupt window. An APPEAL cancels the action and discards both cards.</li>
-              <li>Discard down to 9 Table cards, then check for a win.</li>
+              <li>Every card left in your Hand, including Action cards, is discarded automatically. If a STEAL left more than 9 cards on the Table, move cards to Hand, then check for a win.</li>
             </ol>
           </section>
           <section>
