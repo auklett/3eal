@@ -20,6 +20,6 @@ jobs:
           cache: npm
           cache-dependency-path: game/package-lock.json
       - run: npm ci
-      - run: npm test
+      - run: npx firebase emulators:exec --only auth,firestore --project demo-3eal-rules "npm test"
       - run: npm run lint
       - run: npm run build

@@ -45,21 +45,23 @@ game/
 * `npm run build` - Build for production (TypeScript compile + Vite build)
 * `npm run preview` - Preview production build locally
 * `npm run lint` - Run OxLint for code quality checks
-* `npm test` - Run game-engine unit tests
+* `npm test` - Run engine tests and Firestore-rule tests when the emulator is active
+* `npm run build:analyze` - Build and generate a local bundle report at `dist/bundle-stats.html`
+* `npx firebase emulators:exec --only firestore --project demo-3eal-rules "npm test"` - Run the suite with Firestore security rules enabled
 
 ---
 
 ## 4. Current Architecture
 
-* **Authoritative state:** Cloudflare Pages Functions verify Firebase ID tokens and use Firestore REST transactions for room and game mutations. Server-side game state keeps the deck, hands, and concealed card identities private.
-* **Realtime views:** Firestore publishes lobby metadata and sanitized per-player game views. Clients cannot write Firestore documents directly; private game state is not readable from the client.
+* **Authoritative state:** Cloudflare Pages Functions verify Firebase ID tokens, batch-read room/state documents, and atomically commit with Firestore update-time preconditions. Server-side game state keeps the deck, hands, and concealed card identities private; unchanged deck and seat documents are not rewritten.
+* **Realtime views:** Firestore publishes lobby metadata and sanitized public game state. Each player can read only their assigned private seat document; spectators cannot read player hands. Per-seat versions reconcile independently delivered public/private snapshots. Deck and server metadata are server-only. Clients cannot write Firestore documents directly.
 * **Local development:** Firebase Auth and Firestore emulators run with the same project ID as the client and Pages Function configuration.
-* **Room identity:** The API enforces case-insensitive unique names inside each room and allocates numbered `Player N` defaults to joining players.
+* **Room identity:** The API normalizes names for uniqueness, admits players up to the current deck's 59-player starting-deal capacity and up to 8 spectators, and allocates numbered `Player N` defaults to joining players.
 * **Card movement:** Table rearrangement is local-only presentation state. It does not call the server and does not change the order opponents see. Hand-to-Table moves and swaps are game actions and are validated by the authoritative API.
-* **Draw and cleanup:** Each turn draws automatically into Hand. Normal/TEAL cards can be placed or swapped onto the Table during Main; all cards left in Hand at turn end are discarded automatically.
+* **Draw and cleanup:** Each turn draws automatically into Hand. Normal/TEAL cards can be placed or swapped onto the Table during Main; Normal/TEAL cards left in Hand are shuffled back into the deck at turn end, while Action cards stay in Hand. Discarded cards are recycled directly into the deck.
 * **Latency feedback:** The UI reports when a server-bound request is submitted, accepted, or rejected. Firestore subscriptions deliver the resulting state separately from the command response.
 * **Winner persistence:** Winning sets are serialized as objects containing card arrays, avoiding Firestore's prohibition on nested arrays.
-* **Active-game membership:** Leaving or host removal discards that player's cards, updates turn order and host identity, and refreshes sanitized views. A lone remaining member may continue.
-* **Bundle loading:** Home is kept independent of Firebase; Lobby and Game Board are lazy-loaded to defer game code until needed.
+* **Active-game membership:** Leaving or host removal recycles that player's cards and updates turn order and host identity. Connected clients heartbeat every 15 seconds; turn limits are host-configurable, three consecutive missed turns forfeit a seat, and rejoining requires host approval. Spectators receive only public Tables.
+* **Bundle loading:** Lobby and Game Board are lazy-loaded; Firebase auth/Firestore and React are in named, cacheable chunks. `npm run build:analyze` creates a local bundle report; API and first-Firestore-snapshot timings are measured in the browser, and Pages Functions emit `Server-Timing`.
 
 Production Firebase rules and Cloudflare Pages runtime bindings still require deployment verification. The CI workflow runs tests, lint, and build but does not deploy.

@@ -1,15 +1,21 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ActionType, Card, Player } from '../types';
 import { completeSetCount } from '../logic/validation';
 import {
   ensurePlayerId,
+  cancelRejoinRequest,
+  checkRejoinStatus,
   isRoomMember,
   kickPlayer,
   leaveRoom,
+  rejoinRoom,
+  respondToRejoinRequest,
   sendGameCommand,
+  subscribeToRejoinRequests,
   subscribeToPlayerView,
   type GameViewPlayer,
-  type PlayerGameView
+  type PlayerGameView,
+  type RejoinRequest
 } from '../lib/rooms';
 import CardComponent from '../components/cards/CardComponent';
 import HamburgerMenu from '../components/game/HamburgerMenu';
@@ -67,7 +73,13 @@ export default function GameBoard({ roomCode, onLeave, onReturnToLobby }: GameBo
   const [pendingCommand, setPendingCommand] = useState<string | null>(null);
   const [draggingCardId, setDraggingCardId] = useState<string | null>(null);
   const [appealDismissed, setAppealDismissed] = useState(false);
+  const [canRejoin, setCanRejoin] = useState(false);
+  const [rejoinRequested, setRejoinRequested] = useState(false);
+  const [rejoinRequests, setRejoinRequests] = useState<RejoinRequest[]>([]);
+  const [rejoinName, setRejoinName] = useState(() => sessionStorage.getItem('3eal-player-name') ?? '');
+  const [isRejoining, setIsRejoining] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(30);
+  const [turnSecondsLeft, setTurnSecondsLeft] = useState(0);
   const pendingCommandRef = useRef(false);
   const dragRef = useRef<{ card: Card; zone: Zone; pointerId: number; x: number; y: number; started: boolean } | null>(null);
   const suppressClickRef = useRef(false);
@@ -88,16 +100,29 @@ export default function GameBoard({ roomCode, onLeave, onReturnToLobby }: GameBo
         (nextView) => {
           if (!mounted) return;
           viewRef.current = nextView;
-          setView(nextView);
+          startTransition(() => setView(nextView));
           if (nextView?.pendingAction) setAppealDismissed(false);
-          if (!nextView) setError('Your private game view is not available. Return to the lobby and ask the host to start the game.');
+          if (!nextView) {
+            void isRoomMember(roomCode).then((isMember) => {
+              if (!mounted) return;
+              if (!isMember) {
+                setCanRejoin(true);
+                setError('Request your seat using your unique in-game name after the player has been away for 45 seconds. The host must approve.');
+              } else {
+                setError('Your private game view is not available. Return to the lobby and ask the host to start the game.');
+              }
+            }).catch((membershipError: unknown) => {
+              if (mounted) setError(membershipError instanceof Error ? membershipError.message : 'Unable to verify your game membership.');
+            });
+          }
         },
         (subscriptionError) => {
           if (!mounted) return;
           void isRoomMember(roomCode).then((isMember) => {
             if (!mounted) return;
             if (!isMember) {
-              onLeave();
+              setCanRejoin(true);
+              setError('Request your seat using your unique in-game name after the player has been away for 45 seconds. The host must approve.');
               return;
             }
             setError(subscriptionError.message);
@@ -119,6 +144,54 @@ export default function GameBoard({ roomCode, onLeave, onReturnToLobby }: GameBo
       unsubscribe?.();
     };
   }, [roomCode, onLeave]);
+
+  const heartbeatSelfId = view?.selfId;
+  const heartbeatWinnerId = view?.winnerId;
+  useEffect(() => {
+    if (!heartbeatSelfId || heartbeatWinnerId) return;
+    const heartbeat = () => {
+      void sendGameCommand(roomCode, 'heartbeat').catch((heartbeatError: unknown) => {
+        setError(heartbeatError instanceof Error ? heartbeatError.message : 'Connection heartbeat failed.');
+      });
+    };
+    heartbeat();
+    const interval = window.setInterval(heartbeat, 15_000);
+    return () => window.clearInterval(interval);
+  }, [roomCode, heartbeatSelfId, heartbeatWinnerId]);
+
+  const isHost = Boolean(view?.players[view.selfId]?.isHost);
+  useEffect(() => {
+    if (!isHost) {
+      setRejoinRequests([]);
+      return;
+    }
+    return subscribeToRejoinRequests(
+      roomCode,
+      setRejoinRequests,
+      (subscriptionError) => setError(subscriptionError.message)
+    );
+  }, [isHost, roomCode]);
+
+  useEffect(() => {
+    if (!rejoinRequested) return;
+    const checkStatus = () => {
+      void checkRejoinStatus(roomCode).then(({ status }) => {
+        if (status === 'PLAYER' || status === 'SPECTATOR') {
+          window.location.reload();
+        } else if (status === 'EXPIRED' || status === 'NOT_FOUND') {
+          setRejoinRequested(false);
+          setError(status === 'EXPIRED'
+            ? 'The request expired. You can try again or return to the main screen.'
+            : 'The host dismissed your request. You can try again or return to the main screen.');
+        }
+      }).catch((statusError: unknown) => {
+        setError(statusError instanceof Error ? statusError.message : 'Could not check your rejoin request.');
+      });
+    };
+    checkStatus();
+    const interval = window.setInterval(checkStatus, 2_500);
+    return () => window.clearInterval(interval);
+  }, [rejoinRequested, roomCode]);
 
   const send = useCallback(async (
     action: 'draw' | 'play' | 'appeal' | 'discard' | 'moveToTable' | 'moveToHand' | 'endTurn' | 'resolve',
@@ -155,9 +228,9 @@ export default function GameBoard({ roomCode, onLeave, onReturnToLobby }: GameBo
       nextResolutionAttempt.current = 0;
       return;
     }
-    const resolutionKey = `${pendingAction.actionType}:${pendingAction.sourcePlayerId}:${pendingAction.appealWindowEndsAt}`;
+    const resolutionKey = `${pendingAction.actionType}:${pendingAction.sourcePlayerId}:${pendingAction.resolveAt}`;
     const updateTimer = () => {
-      const remaining = Math.max(0, Math.ceil((pendingAction.appealWindowEndsAt - Date.now()) / 1000));
+      const remaining = Math.max(0, Math.ceil((pendingAction.resolveAt - Date.now()) / 1000));
       setSecondsLeft(remaining);
       if (remaining === 0 && pendingResolution.current !== resolutionKey && Date.now() >= nextResolutionAttempt.current) {
         pendingResolution.current = resolutionKey;
@@ -172,10 +245,24 @@ export default function GameBoard({ roomCode, onLeave, onReturnToLobby }: GameBo
     return () => window.clearInterval(timer);
   }, [pendingAction, send]);
 
-  const players = view?.players ?? {};
+  useEffect(() => {
+    if (!view?.turnEndsAt || view.winnerId || view.turnPhase === 'INTERRUPT') {
+      setTurnSecondsLeft(0);
+      return;
+    }
+    const updateTimer = () => setTurnSecondsLeft(Math.max(0, Math.ceil((view.turnEndsAt! - Date.now()) / 1_000)));
+    updateTimer();
+    const timer = window.setInterval(updateTimer, 250);
+    return () => window.clearInterval(timer);
+  }, [view?.turnEndsAt, view?.turnPhase, view?.winnerId]);
+
+  const players = useMemo(() => view?.players ?? {}, [view?.players]);
   const self = view ? players[view.selfId] : undefined;
   const activePlayer = view ? players[view.activePlayerId] : undefined;
-  const opponents = Object.values(players).filter((player) => player.id !== view?.selfId);
+  const opponents = useMemo(
+    () => Object.values(players).filter((player) => player.id !== view?.selfId),
+    [players, view?.selfId]
+  );
   const sameNameOpponent = Boolean(self && opponents.some((player) =>
     player.name.trim().toLocaleLowerCase() === self.name.trim().toLocaleLowerCase()
   ));
@@ -296,6 +383,35 @@ export default function GameBoard({ roomCode, onLeave, onReturnToLobby }: GameBo
     }
   };
 
+  const handleRejoin = async () => {
+    setIsRejoining(true);
+    setError('');
+    try {
+      const name = rejoinName.trim().slice(0, 24);
+      const result = await rejoinRoom(roomCode, name);
+      sessionStorage.setItem('3eal-player-name', name);
+      if (result.status === 'PENDING') {
+        setRejoinRequested(true);
+        setError('Your request is waiting for the host. If it expires, you will join as a spectator when a spectator spot is available.');
+      } else {
+        window.location.reload();
+      }
+    } catch (rejoinError) {
+      setError(rejoinError instanceof Error ? rejoinError.message : 'Could not rejoin the game.');
+      setIsRejoining(false);
+    }
+  };
+
+  const handleCancelRejoin = async () => {
+    try {
+      await cancelRejoinRequest(roomCode);
+    } catch (cancelError) {
+      setError(cancelError instanceof Error ? cancelError.message : 'Could not cancel the rejoin request.');
+    } finally {
+      onLeave();
+    }
+  };
+
   const handleKickPlayer = async (playerId: string) => {
     if (pendingCommandRef.current) return;
     pendingCommandRef.current = true;
@@ -308,6 +424,15 @@ export default function GameBoard({ roomCode, onLeave, onReturnToLobby }: GameBo
     } finally {
       pendingCommandRef.current = false;
       setPendingCommand(null);
+    }
+  };
+
+  const handleRejoinResponse = async (requesterId: string, approve: boolean) => {
+    try {
+      await respondToRejoinRequest(roomCode, requesterId, approve);
+      setMessage(approve ? 'Player rejoined the game.' : 'Request declined; the player can watch as a spectator.');
+    } catch (responseError) {
+      setError(responseError instanceof Error ? responseError.message : 'Could not respond to the rejoin request.');
     }
   };
 
@@ -419,6 +544,98 @@ export default function GameBoard({ roomCode, onLeave, onReturnToLobby }: GameBo
     else setSelection({ zone, cardId: card.id });
   };
 
+  if (canRejoin) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center gap-5 bg-black p-8 text-center text-white">
+        <section className="w-full max-w-md rounded-2xl border border-white/25 bg-white/[0.05] p-6">
+          <h1 className="mb-2 text-2xl font-bold">Rejoin 3EAL</h1>
+          <p className="mb-5 text-sm text-white/70">{error}</p>
+          <label className="mb-4 block text-left">
+            <span className="mb-2 block text-sm">Your unique in-game name</span>
+            <input
+              value={rejoinName}
+              maxLength={24}
+              onChange={(event) => setRejoinName(event.target.value)}
+              className="min-h-11 w-full rounded-lg border border-white/30 bg-black px-3 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-400"
+            />
+          </label>
+          <div className="flex justify-center gap-3">
+            <button type="button" style={buttonStyle} onClick={() => void (rejoinRequested ? handleCancelRejoin() : onLeave())}>
+              {rejoinRequested ? 'Cancel Request' : 'Return Home'}
+            </button>
+            <button type="button" style={buttonStyle} disabled={isRejoining || rejoinRequested || !rejoinName.trim()} onClick={() => void handleRejoin()}>
+              {isRejoining ? 'Sending…' : rejoinRequested ? 'Waiting for Host…' : 'Request to Rejoin'}
+            </button>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  if (view?.viewerRole === 'SPECTATOR') {
+    return (
+      <main className="min-h-screen bg-black px-4 pb-10 pt-6 text-white sm:px-6">
+        <HamburgerMenu
+          players={Object.values(players)}
+          selfId={view.selfId}
+          roomCode={roomCode}
+          onLeaveGame={() => void handleLeaveGame()}
+          onKickPlayer={(playerId) => void handleKickPlayer(playerId)}
+        />
+        <header className="mx-auto mb-6 flex max-w-6xl items-center justify-between">
+          <div>
+            <h1 className="m-0 text-3xl font-bold tracking-wide">3EAL · Spectator</h1>
+            <p className="text-sm text-white/60">Room {roomCode}</p>
+          </div>
+          <button type="button" style={buttonStyle} onClick={() => void handleLeaveGame()}>Leave Game</button>
+        </header>
+        <section className="mx-auto mb-6 max-w-6xl rounded-xl border border-white/25 bg-white/[0.06] p-4">
+          <p className="text-lg">
+            {view.winnerId
+              ? `${players[view.winnerId]?.name ?? 'A player'} wins!`
+              : `Watching ${players[view.activePlayerId]?.name ?? 'the next player'} · ${view.turnPhase}`}
+          </p>
+          <p className="text-sm text-white/70">Cards remaining: {view.deckCount}</p>
+        </section>
+        {error && <p className="mx-auto mb-4 max-w-6xl text-center text-sm text-rose-300" role="alert">{error}</p>}
+        {isHost && rejoinRequests.length > 0 && (
+          <section className="mx-auto mb-5 max-w-6xl rounded-xl border border-amber-200/30 bg-amber-950/20 p-4">
+            <h2 className="mb-3 font-semibold">Rejoin requests</h2>
+            {rejoinRequests.map((request) => (
+              <div key={request.requesterId} className="flex flex-wrap items-center justify-between gap-3 py-2">
+                <span>{request.name} wants to reclaim their seat.</span>
+                <div className="flex gap-2">
+                  <button type="button" style={buttonStyle} onClick={() => void handleRejoinResponse(request.requesterId, true)}>Approve</button>
+                  <button type="button" style={buttonStyle} onClick={() => void handleRejoinResponse(request.requesterId, false)}>Decline as spectator</button>
+                </div>
+              </div>
+            ))}
+          </section>
+        )}
+        <section className="mx-auto grid max-w-6xl gap-5 sm:grid-cols-2 lg:grid-cols-3">
+          {Object.values(players).filter((player) => player.role === 'PLAYER').map((player) => (
+            <article key={player.id} className="rounded-2xl border border-white/20 bg-white/[0.04] p-4">
+              <h2 className="mb-3 font-semibold">
+                {player.name}{player.id === view.activePlayerId ? ' · Active' : ''}
+                <span className="ml-2 text-xs text-white/60">{player.isOnline ? 'Online' : 'Away'}</span>
+              </h2>
+              <div className="flex flex-wrap gap-2">
+                {player.table.map((card) => (
+                  <CardComponent key={card.id} card={card} faceDown={!card.isRevealed} />
+                ))}
+              </div>
+            </article>
+          ))}
+        </section>
+        {view.winnerId && (
+          <p className="mt-8 text-center text-2xl font-bold" role="status">
+            {players[view.winnerId]?.name} wins!
+          </p>
+        )}
+      </main>
+    );
+  }
+
   if (!view || !self || !activePlayer) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center gap-5 bg-black p-8 text-center text-white">
@@ -458,7 +675,7 @@ export default function GameBoard({ roomCode, onLeave, onReturnToLobby }: GameBo
                   : `${activePlayer.name}'s turn (not you)`}
           </p>
           <p className="text-sm text-white/70">
-            Phase: {view.turnPhase} · {isMyTurn ? 'You are the active player' : `Waiting for ${activePlayer.name}`}
+            Phase: {view.turnPhase} · {isMyTurn ? 'You are the active player' : `Waiting for ${activePlayer.name}`} · {turnSecondsLeft}s left
           </p>
           {!isMyTurn && sameNameOpponent && !view.winnerId && (
             <p className="mt-1 text-sm text-amber-200" role="status">
@@ -467,28 +684,28 @@ export default function GameBoard({ roomCode, onLeave, onReturnToLobby }: GameBo
           )}
         </div>
         <div className="flex gap-4 text-sm text-white/80">
-          <span>Deck: {view.deckCount}</span>
-          <span>Discard: {view.discardPile.length}</span>
+          <span>Cards remaining: {view.deckCount}</span>
           <span>Your sets: {completeSetCount(self.table)}/3</span>
         </div>
       </section>
+      {isHost && rejoinRequests.length > 0 && (
+        <section className="mx-auto mb-5 max-w-6xl rounded-xl border border-amber-200/30 bg-amber-950/20 p-4">
+          <h2 className="mb-3 font-semibold">Rejoin requests</h2>
+          <ul className="space-y-3">
+            {rejoinRequests.map((request) => (
+              <li key={request.requesterId} className="flex flex-wrap items-center justify-between gap-3">
+                <span>{request.name} wants to reclaim their seat.</span>
+                <div className="flex gap-2">
+                  <button type="button" style={buttonStyle} onClick={() => void handleRejoinResponse(request.requesterId, true)}>Approve</button>
+                  <button type="button" style={buttonStyle} onClick={() => void handleRejoinResponse(request.requesterId, false)}>Decline as spectator</button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       {message && <p className="mx-auto mb-4 max-w-6xl text-center text-sm text-teal-100" role="status" aria-live="polite">{message}</p>}
       {error && <p className="mx-auto mb-4 max-w-6xl text-center text-sm text-rose-300" role="alert">{error}</p>}
-
-      <section className="mx-auto mb-6 flex max-w-6xl flex-wrap justify-center gap-6" aria-label="Deck and discard pile">
-        <div className="text-center">
-          <p className="mb-2">Draw Deck</p>
-          <CardComponent card={{ id: 'deck-back', category: 'NORMAL', isRevealed: false }} faceDown />
-          <p className="mt-1 text-xs text-white/60">{view.deckCount} cards</p>
-        </div>
-        <div className="text-center">
-          <p className="mb-2">Discard Pile</p>
-          {view.discardPile.length > 0
-            ? <CardComponent card={view.discardPile[view.discardPile.length - 1]} />
-            : <div className="h-[112px] w-[80px] rounded-xl border border-dashed border-white/40" />}
-          <p className="mt-1 text-xs text-white/60">{view.discardPile.length} cards</p>
-        </div>
-      </section>
 
       <section className="player-zones mx-auto mb-8 max-w-6xl gap-8 rounded-2xl border border-white/25 bg-white/[0.04] p-4 sm:p-6">
         <div className="min-w-0 flex-1">
@@ -532,7 +749,7 @@ export default function GameBoard({ roomCode, onLeave, onReturnToLobby }: GameBo
           <h2 className="mb-3 text-center text-xl font-semibold">Your Hand ({self.hand.length})</h2>
           {actionReady && (
             <p className="mb-2 text-center text-sm text-amber-200" role="note">
-              Any cards left in your Hand, including Action cards, are discarded at the end of your turn. To discard a Table card, move it to your Hand.
+              Normal and TEAL cards left in your Hand are shuffled back into the deck at turn end. Action cards stay in your Hand.
             </p>
           )}
           <div data-hand-zone className="flex min-h-32 flex-wrap justify-center gap-3 rounded-xl border border-dashed border-white/10 p-2">
@@ -613,7 +830,9 @@ export default function GameBoard({ roomCode, onLeave, onReturnToLobby }: GameBo
               <h2 className="text-lg font-semibold">
                 {opponent.name}{self && opponent.name.trim().toLocaleLowerCase() === self.name.trim().toLocaleLowerCase() ? ' (another player)' : ''}&apos;s Table
               </h2>
-              <span className="rounded-full border border-white/40 px-3 py-1 text-sm">Hand: {opponent.handCount}</span>
+              <span className={`rounded-full border px-3 py-1 text-sm ${opponent.isOnline ? 'border-white/40' : 'border-amber-300/60 text-amber-200'}`}>
+                {opponent.isOnline ? 'Online' : 'Away · turn skipped after 60s'} · Hand: {opponent.handCount}
+              </span>
             </div>
             <div className="grid w-fit grid-cols-3 gap-2">
               {tableSlots(opponent).map((cardId, index) => {

@@ -1,8 +1,6 @@
-import type { Card, CardColor, CardShape, ActionType } from '../types';
-
-const COLORS: CardColor[] = ['C0C0FF', '008080', 'C06060'];
-const NUMBERS = [1, 2, 3, 4, 5, 6, 7];
-const SHAPES: CardShape[] = ['circle', 'triangle', 'square', 'pentagon', 'hexagon'];
+import type { ActionType, Card } from '../types';
+import { GAME_CONFIG } from './config';
+import { hashSeed, shuffleSeeded } from './seededRandom';
 
 const ACTION_TYPES: ActionType[] = ['CONCEAL', 'STEAL', 'REVEAL', 'APPEAL'];
 const ACTION_DETAILS: Record<ActionType, { title: string; description: string }> = {
@@ -24,15 +22,13 @@ const ACTION_DETAILS: Record<ActionType, { title: string; description: string }>
   }
 };
 
-let cardCounter = 0;
-
-export function generateDeck(): Card[] {
-  cardCounter = 0;
+export function generateDeck(seed: number | string = Date.now()): Card[] {
+  let cardCounter = 0;
   const deck: Card[] = [];
 
-  for (const color of COLORS) {
-    for (const number of NUMBERS) {
-      for (const shape of SHAPES) {
+  for (const color of GAME_CONFIG.colors) {
+    for (const number of GAME_CONFIG.numbers) {
+      for (const shape of GAME_CONFIG.shapes) {
         deck.push({
           id: `card_${String(cardCounter++).padStart(3, '0')}`,
           category: 'NORMAL',
@@ -45,7 +41,7 @@ export function generateDeck(): Card[] {
     }
   }
 
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < GAME_CONFIG.wildCards; i++) {
     deck.push({
       id: `card_${String(cardCounter++).padStart(3, '0')}`,
       category: 'WILD',
@@ -59,7 +55,7 @@ export function generateDeck(): Card[] {
   }
 
   for (const actionType of ACTION_TYPES) {
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < GAME_CONFIG.actionCopies; i++) {
       deck.push({
         id: `card_${String(cardCounter++).padStart(3, '0')}`,
         category: 'ACTION',
@@ -71,14 +67,8 @@ export function generateDeck(): Card[] {
     }
   }
 
-  return shuffleDeck(deck);
+  return shuffleSeeded(deck, hashSeed(seed)).items;
 }
 
-export function shuffleDeck(deck: Card[]): Card[] {
-  const shuffled = [...deck];
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-  }
-  return shuffled;
-}
+export const shuffleDeck = (deck: Card[], seed: number = Date.now()): Card[] =>
+  shuffleSeeded(deck, hashSeed(seed)).items;

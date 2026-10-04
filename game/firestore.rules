@@ -1,16 +1,39 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /rooms/{roomCode} {
-      allow read: if request.auth != null
-        && request.auth.uid in resource.data.players.keys();
-      allow create, update, delete: if false;
+    function isRoomMember(roomCode) {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/rooms/$(roomCode))
+        && request.auth.uid in get(/databases/$(database)/documents/rooms/$(roomCode)).data.players.keys();
+    }
 
-      match /views/{playerId} {
-        allow get: if request.auth != null
-          && request.auth.uid == playerId
-          && resource.data.selfId == request.auth.uid;
+    function isRoomHost(roomCode) {
+      return isRoomMember(roomCode)
+        && get(/databases/$(database)/documents/rooms/$(roomCode)).data.hostId == request.auth.uid;
+    }
+
+    match /rooms/{roomCode} {
+      allow get: if isRoomMember(roomCode);
+      allow list, create, update, delete: if false;
+
+      match /public/{document} {
+        allow get: if document == 'state' && isRoomMember(roomCode);
         allow list, create, update, delete: if false;
+      }
+
+      match /playerPrivate/{seatId} {
+        allow get: if isRoomMember(roomCode)
+          && get(/databases/$(database)/documents/rooms/$(roomCode)).data.players[request.auth.uid].role == 'PLAYER'
+          && get(/databases/$(database)/documents/rooms/$(roomCode)).data.players[request.auth.uid].seatIndex == resource.data.seatIndex
+          && resource.data.ownerId == request.auth.uid;
+        allow list, create, update, delete: if false;
+      }
+
+      match /rejoinRequests/{requestId} {
+        allow get: if request.auth != null
+          && (request.auth.uid == requestId || isRoomHost(roomCode));
+        allow list: if isRoomHost(roomCode);
+        allow create, update, delete: if false;
       }
 
       match /private/{document=**} {

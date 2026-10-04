@@ -6,15 +6,15 @@ The application includes a polished Home screen, a Firebase-backed live Lobby, a
 
 ## Game overview
 
-- **Players:** 2 or more to start; remaining players may continue if others leave mid-game
-- **Deck:** 120 cards — 105 Normal, 3 TEAL wild, and 12 Action cards
+- **Players:** 2 or more players; the current deck can deal starting cards to up to 59 players. Up to 8 additional spectators.
+- **Deck:** 218 cards — 175 Normal, 3 TEAL wild, and 40 Action cards (10 of each action)
 - **Objective:** Be the first to have 9 cards on your Table that form 3 valid sets
 - **Valid sets:** Three cards sharing a color, number, or shape
 - **TEAL:** A wild card with fixed Teal color that can adopt any number or shape when completing a set
 
-Action cards are **CONCEAL**, **STEAL**, **REVEAL**, and **APPEAL**. CONCEAL, STEAL, and REVEAL open an interrupt window; the eligible player or players can use APPEAL to cancel the action. The current game implementation uses a 30-second window.
+Action cards are **CONCEAL**, **STEAL**, **REVEAL**, and **APPEAL**. CONCEAL, STEAL, and REVEAL always open a server-timed 30-second interrupt window. Eligible players holding APPEAL can use it to cancel the action.
 
-Drawing happens automatically when your turn begins. Every drawn card goes to your private Hand first. During Main, Normal and TEAL cards may be moved to an open Table slot; with 9 cards on the Table, moving one swaps it with a selected Table card. To discard a Table card, move it to your Hand. All cards left in Hand—including Action cards—are discarded automatically at turn end. Table rearrangement is local-only and is not sent to the server or shown to opponents.
+Every player starts with three revealed cards on their Table. Drawing happens automatically when your turn begins, and the card goes to your private Hand first. During Main, Normal and TEAL cards may be moved to an open Table slot; with 9 cards on the Table, moving one swaps it with a selected Table card. Normal/TEAL cards left in Hand at turn end are shuffled into the draw deck; Action cards remain in your Hand. Discarded cards are shuffled directly into the draw deck, with no discard pile. Hosts choose a 45-, 75-, or 120-second turn limit. Three consecutive missed turns forfeit a seat; disconnected players are skipped and can request to reclaim their seat with host approval. Late joiners may spectate. Table rearrangement is local-only and is not sent to the server or shown to opponents.
 
 For the complete rules and card details, see [`docs/rules.md`](docs/rules.md).
 
@@ -27,20 +27,23 @@ For the complete rules and card details, see [`docs/rules.md`](docs/rules.md).
 - Game Board with Table and Hand, server-validated card moves/swaps and action targeting, and player/rules menus
 - Home screen with room-code entry, room creation, and Rules access
 - Live Firebase Lobby with unique player names, numbered defaults, room creation/joining, roster updates, player and room renaming, host kick, leave, host handoff, and host start
+- Invalid room codes offer a return-to-home option or create a new lobby using that code
 - Firebase anonymous authentication for lobby player identity
+- Player/spectator roles, post-start spectator joins, configurable turn timers, missed-turn forfeits, and host-approved rejoin requests
 - Server-authoritative game state and mutation API hosted in Cloudflare Pages Functions
 - Table-card rearrangement by tap or drag, stored locally and never sent to the server; drag previews follow the pointer
 - Hand-to-Table drag placement targets a specific slot; Table cards can be dragged to Hand during the active turn
 - Game-over screen shows the winner's sets and returns to that room's lobby
 - Immediate pending, accepted, and failed feedback for server-bound game actions
-- Per-player sanitized Firestore game views; the canonical deck, hands, and concealed card identities are server-only
-- Client-denying Firestore rules configured and exercised in the local emulator
+- Public game state plus owner-only private seat documents; the canonical deck and server metadata are server-only
+- Client-denying Firestore rules and emulator-backed security tests in CI
 - Active-game leave/kick handling with card discard, turn-order updates, host handoff, and continued single-player play
+- 15-second game heartbeats, away detection, turn skips/forfeits, and host handoff
 - Vitest game-engine unit tests and GitHub Actions CI for tests, lint, and build
 
 ### Remaining work
 
-Production Firestore rules and Cloudflare Pages bindings still need to be verified and deployed. Integration coverage, manual device/accessibility checks, and operational recovery validation remain. Optional bot, tutorial, sound, spectator, history, and alternate-variant ideas remain post-MVP. See [`docs/roadmap.md`](docs/roadmap.md).
+Production Firestore rules and Cloudflare Pages bindings still need to be verified and deployed. Integration coverage beyond the emulator security tests, manual device/accessibility checks, and operational recovery validation remain. Optional bot, tutorial, sound, history, and alternate-variant ideas remain post-MVP. See [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Quick start
 
@@ -94,7 +97,7 @@ Configure the public Firebase web-app values (`VITE_FIREBASE_API_KEY`, `VITE_FIR
 
 Set `FIREBASE_PROJECT_ID` as a Pages Function runtime variable. Add `FIREBASE_SERVICE_ACCOUNT` as an encrypted **secret** binding containing the complete JSON key for a dedicated service account granted only the Cloud Datastore User role (`roles/datastore.user`). Do not put the service-account JSON in source control, `wrangler.toml`, a build variable, or any `VITE_` variable. Redeploy after changing build variables or Function secrets so the new deployment uses the configuration.
 
-The browser can read lobby metadata and only its own sanitized `rooms/{roomCode}/views/{uid}` game document. The authoritative deck, hands, and concealed card identities are stored in `rooms/{roomCode}/private/state`; client Firestore rules should deny direct access to that state and deny client writes. Game and lobby mutations pass through the Pages Functions API, which uses Firestore REST transactions. The API verifies Firebase ID tokens against Google's public signing certificates.
+The browser can read room metadata and sanitized `rooms/{roomCode}/public/state`. Players can read only their assigned `rooms/{roomCode}/playerPrivate/{seatId}` document; spectators cannot read player-private state. The deck and authoritative metadata live under `rooms/{roomCode}/private/` and are inaccessible to clients. Game and lobby mutations pass through the Pages Functions API, which batch-reads state, conditionally commits changes, and avoids rewriting unchanged deck/seat documents. The API verifies Firebase ID tokens against Google's public signing certificates.
 
 `game/firestore.rules` is connected to `game/firebase.json` for local emulator testing. Verify and deploy the reviewed rules to the production Firebase project separately.
 
@@ -118,7 +121,14 @@ Run these from `game/`:
 | `npm run preview` | Preview the production build locally |
 | `npm run pages:dev` | Build the emulator-configured frontend and serve Pages Functions locally |
 | `npm run lint` | Run OxLint |
-| `npm test` | Run Vitest game-engine unit tests |
+| `npm test` | Run Vitest engine tests and Firestore-rule tests (the rule tests run when the emulator is active) |
+| `npm run build:analyze` | Build locally and write a bundle report to `dist/bundle-stats.html` |
+
+Run the emulator-backed Firestore-rule tests on their own with:
+
+```bash
+npx firebase emulators:exec --only firestore --project demo-3eal-rules "npm test"
+```
 
 ## Project structure
 
