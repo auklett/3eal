@@ -4,7 +4,10 @@ import { completeSetCount } from '../../logic/validation';
 import RulesOverlay from './RulesOverlay';
 
 interface HamburgerMenuProps {
-  players: Array<Pick<Player, 'id' | 'name' | 'hand' | 'table' | 'isHost'> & { handCount?: number }>;
+  players: Array<Pick<Player, 'id' | 'name' | 'hand' | 'table' | 'isHost'> & {
+    handCount?: number;
+    role?: 'PLAYER' | 'SPECTATOR';
+  }>;
   selfId: string;
   roomCode: string;
   onLeaveGame: () => void;
@@ -16,6 +19,16 @@ export default function HamburgerMenu({ players, selfId, roomCode, onLeaveGame, 
   const [isOpen, setIsOpen] = useState(false);
   const [showRules, setShowRules] = useState(false);
   const [showPlayers, setShowPlayers] = useState(false);
+  const [colorBlindMode, setColorBlindMode] = useState(
+    () => localStorage.getItem('3eal-colorblind-mode') === 'true'
+  );
+
+  const toggleColorBlindMode = () => {
+    const enabled = !colorBlindMode;
+    localStorage.setItem('3eal-colorblind-mode', String(enabled));
+    setColorBlindMode(enabled);
+    window.dispatchEvent(new Event('3eal-colorblind-change'));
+  };
 
   // The hamburger/X button is now context-aware:
   // - On a sub-page (Rules/Players) -> closes the overlay and returns to the game
@@ -173,6 +186,15 @@ export default function HamburgerMenu({ players, selfId, roomCode, onLeaveGame, 
 
             <div className="space-y-4 mt-2">
               <button
+                type="button"
+                role="switch"
+                aria-checked={colorBlindMode}
+                onClick={toggleColorBlindMode}
+                style={menuButtonStyle}
+              >
+                Color patterns: {colorBlindMode ? 'On' : 'Off'}
+              </button>
+              <button
                 onClick={handleShowRules}
                 style={menuButtonStyle}
                 onMouseEnter={(e) => {
@@ -274,7 +296,8 @@ export default function HamburgerMenu({ players, selfId, roomCode, onLeaveGame, 
               <div className="space-y-4">
                 {players.map((player) => {
                   const tableCount = player.table.filter((c) => c !== null).length;
-                  const handCount = player.handCount ?? player.hand.length;
+                  const handCount = player.handCount ??
+                    (player.id === selfId && player.role !== 'SPECTATOR' ? player.hand.length : undefined);
                   return (
                     <div
                       key={player.id}
@@ -288,7 +311,7 @@ export default function HamburgerMenu({ players, selfId, roomCode, onLeaveGame, 
                         <h3 className="text-2xl font-bold text-white">
                           {player.name}{player.isHost ? ' · Host' : ''}
                         </h3>
-                        <span className="text-lg text-white">Table {tableCount} | Hand {handCount}</span>
+                        <span className="text-lg text-white">Table {tableCount} | Hand {handCount ?? 'Hidden'}</span>
                       </div>
                       <p className="mt-2 text-sm text-white/70">
                         Completed sets: {completeSetCount(player.table)}/3

@@ -1,13 +1,25 @@
-import type { GameState, Player } from '../types';
-import { generateDeck, shuffleDeck } from './deck';
+import type { Card, GameState, Player } from '../types';
+import { generateDeck } from './deck';
+import { GAME_CONFIG, MAX_STARTABLE_PLAYERS } from './config';
+import { hashSeed, nextRandom, shuffleSeeded } from './seededRandom';
 import { checkWinCondition, findBestPartition } from './validation';
 
-const INTERRUPT_WINDOW_MS = 30_000;
+export function getInterruptDurationMs(): number {
+  return GAME_CONFIG.interruptDurationMs;
+}
 
-export function initializeGame(players: Player[]): GameState {
+export function initializeGame(
+  players: Player[],
+  seed: number | string = Date.now(),
+  turnDurationMs: number = GAME_CONFIG.defaultTurnDurationMs
+): GameState {
   if (players.length === 0) throw new Error('A game requires at least one player');
+  if (players.length > MAX_STARTABLE_PLAYERS) {
+    throw new Error(`The deck can deal starting cards to at most ${MAX_STARTABLE_PLAYERS} players`);
+  }
 
-  const deck = generateDeck();
+  const deck = generateDeck(seed);
+  let randomSeed = (hashSeed(seed) + 1) >>> 0;
   for (const player of players) {
     player.table = [];
     player.hand = [];
@@ -18,28 +30,31 @@ export function initializeGame(players: Player[]): GameState {
       if (card.category === 'ACTION') {
         deck.unshift(card);
       } else {
+        card.isRevealed = true;
         player.table.push(card);
       }
     }
   }
 
+  const firstPlayer = nextRandom(randomSeed);
+  randomSeed = firstPlayer.state;
   return {
     deck,
-    discardPile: [],
-    activePlayerId: players[Math.floor(Math.random() * players.length)].id,
+    activePlayerId: players[Math.floor(firstPlayer.value * players.length)].id,
     turnNumber: 0,
+    version: 0,
     turnPhase: 'DRAW',
-    winnerId: null
+    winnerId: null,
+    randomSeed,
+    turnDurationMs,
+    turnEndsAt: Date.now() + turnDurationMs,
+    consecutiveMissedTurns: {},
+    forfeitedPlayerIds: []
   };
 }
 
 export function drawCard(game: GameState, player: Player): { game: GameState; player: Player } {
   if (game.turnPhase !== 'DRAW') throw new Error('Cannot draw card outside of DRAW phase');
-
-  if (game.deck.length === 0 && game.discardPile.length > 0) {
-    game.deck = shuffleDeck(game.discardPile);
-    game.discardPile = [];
-  }
 
   const card = game.deck.pop();
   if (!card) throw new Error('There are no cards available to draw');
@@ -48,6 +63,13 @@ export function drawCard(game: GameState, player: Player): { game: GameState; pl
 
   game.turnPhase = 'MAIN';
   return { game, player };
+}
+
+export function recycleCardsToDeck(game: GameState, cards: Card[]): void {
+  if (cards.length === 0) return;
+  const shuffled = shuffleSeeded([...game.deck, ...cards], game.randomSeed);
+  game.deck = shuffled.items;
+  game.randomSeed = shuffled.seed;
 }
 
 export function moveCardToTable(
@@ -92,7 +114,8 @@ export function playCard(
   cardId: string,
   targetPlayerId?: string,
   targetCardId?: string,
-  players?: Record<string, Player>
+  players?: Record<string, Player>,
+  resolveAt = Date.now() + GAME_CONFIG.interruptDurationMs
 ): { game: GameState; player: Player; pendingAction?: boolean } {
   if (game.turnPhase !== 'MAIN') throw new Error('Cannot play a card outside of MAIN phase');
 
@@ -119,6 +142,14 @@ export function playCard(
 
     const target = isSelfAction ? player : players?.[targetPlayerId];
     if (!target) throw new Error('Target player not found');
+    if (card.actionType === 'REVEAL' && !players) {
+      throw new Error('REVEAL requires the current player roster');
+    }
+    if (card.actionType === 'REVEAL' && !Object.values(players ?? {}).some((opponent) =>
+      opponent.id !== player.id && opponent.table.some((tableCard) => !tableCard.isRevealed)
+    )) {
+      throw new Error('REVEAL requires an opponent with a Concealed card');
+    }
     const pendingTarget = target.table.find((tableCard) => tableCard.id === targetCardId);
     if (!pendingTarget) throw new Error('Target card not found on the target Table');
     if (isSelfAction && (!pendingTarget || !pendingTarget.isRevealed)) {
@@ -136,7 +167,7 @@ export function playCard(
       actionType: card.actionType,
       targetCardId,
       wasBlindTarget: card.actionType === 'REVEAL' || (card.actionType === 'STEAL' && !pendingTarget.isRevealed),
-      appealWindowEndsAt: Date.now() + INTERRUPT_WINDOW_MS
+      resolveAt
     };
 
     game.turnPhase = 'INTERRUPT';
@@ -146,7 +177,7 @@ export function playCard(
   const tableIndex = player.table.findIndex((card) => card.id === cardId);
   if (tableIndex !== -1) {
     const [card] = player.table.splice(tableIndex, 1);
-    game.discardPile.push(card);
+    recycleCardsToDeck(game, [card]);
     return { game, player };
   }
 
@@ -186,10 +217,14 @@ export function resolveAction(
     targetCard.isRevealed = true;
   } else if (pendingAction.actionType === 'STEAL' && targetCard) {
     targetPlayer.table.splice(targetIndex, 1);
+    targetCard.isRevealed = true;
     sourcePlayer.table.push(targetCard);
   }
 
-  game.discardPile.push(pendingAction.actionCard);
+  recycleCardsToDeck(game, [pendingAction.actionCard]);
+  if (pendingAction.turnTimeRemainingMs !== undefined) {
+    game.turnEndsAt = Date.now() + pendingAction.turnTimeRemainingMs;
+  }
   game.pendingAction = undefined;
   game.turnPhase = 'MAIN';
   return { game, players };
@@ -205,7 +240,7 @@ export function playAppeal(
   if (game.turnPhase !== 'INTERRUPT' || !pendingAction) {
     throw new Error('There is no action to appeal');
   }
-  if (Date.now() > pendingAction.appealWindowEndsAt) {
+  if (Date.now() > pendingAction.resolveAt) {
     throw new Error('The interrupt window has ended');
   }
   if (!eligibleAppealPlayers(pendingAction, players).some((eligible) => eligible.id === player.id)) {
@@ -218,7 +253,10 @@ export function playAppeal(
   }
 
   const [appealCard] = player.hand.splice(cardIndex, 1);
-  game.discardPile.push(appealCard, pendingAction.actionCard);
+  recycleCardsToDeck(game, [appealCard, pendingAction.actionCard]);
+  if (pendingAction.turnTimeRemainingMs !== undefined) {
+    game.turnEndsAt = Date.now() + pendingAction.turnTimeRemainingMs;
+  }
   game.pendingAction = undefined;
   game.turnPhase = 'MAIN';
   return { game, player };
@@ -231,8 +269,8 @@ export function endTurn(
   if (game.turnPhase !== 'MAIN') throw new Error('Cannot end turn outside of MAIN phase');
   if (player.table.length > 9) throw new Error('Discard Table cards until you have no more than 9');
 
-  game.discardPile.push(...player.hand);
-  player.hand = [];
+  recycleCardsToDeck(game, player.hand.filter((card) => card.category !== 'ACTION'));
+  player.hand = player.hand.filter((card) => card.category === 'ACTION');
 
   if (player.table.length === 9 && checkWinCondition(player.table)) {
     game.winnerId = player.id;
@@ -241,5 +279,12 @@ export function endTurn(
   }
 
   game.turnPhase = 'DRAW';
+  game.turnEndsAt = Date.now() + (game.turnDurationMs ?? GAME_CONFIG.defaultTurnDurationMs);
   return { game, player };
+}
+
+export function skipTurn(game: GameState, player: Player): void {
+  const normalHandCards = player.hand.filter((card) => card.category !== 'ACTION');
+  player.hand = player.hand.filter((card) => card.category === 'ACTION');
+  recycleCardsToDeck(game, [...normalHandCards, ...player.table.splice(9)]);
 }

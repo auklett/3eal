@@ -34,24 +34,23 @@ function combinations(cards: Card[], size: number): Card[][] {
 
 export function findBestPartition(cards: Card[]): Card[][] | null {
   if (cards.length !== 9) return null;
+  const [first, ...rest] = cards;
 
-  const partition = (remaining: Card[]): Card[][] | null => {
-    if (remaining.length === 0) return [];
-    const [first, ...rest] = remaining;
-
-    for (const pair of combinations(rest, 2)) {
-      const candidate = [first, ...pair];
-      if (!validateSet(candidate)) continue;
-
-      const candidateIds = new Set(candidate.map((card) => card.id));
-      const remainder = remaining.filter((card) => !candidateIds.has(card.id));
-      const restOfPartition = partition(remainder);
-      if (restOfPartition) return [candidate, ...restOfPartition];
+  for (const pair of combinations(rest, 2)) {
+    const setOne = [first, ...pair];
+    if (!validateSet(setOne)) continue;
+    const setOneIds = new Set(setOne.map((card) => card.id));
+    const afterFirst = cards.filter((card) => !setOneIds.has(card.id));
+    for (const setTwo of combinations(afterFirst, 3)) {
+      if (!validateSet(setTwo)) continue;
+      const setTwoIds = new Set(setTwo.map((card) => card.id));
+      const setThree = afterFirst.filter((card) => !setTwoIds.has(card.id));
+      if (validateSet(setThree)) {
+        return [setOne, setTwo, setThree];
+      }
     }
-    return null;
-  };
-
-  return partition(cards);
+  }
+  return null;
 }
 
 export function checkWinCondition(cards: Card[]): boolean {

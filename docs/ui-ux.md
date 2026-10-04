@@ -5,8 +5,8 @@
 * **Main Background Color:** `#000000` (Pure Black)
 * **Main Text Color:** `#FFFFFF` (Pure White)
 * **Card Aspect Ratio:** `5:7` (80px × 112px) with rounded corners (`border-radius: 12px` / `rounded-xl`)
-* **Table Layout:** Cards displayed in a 3×3 grid (max 9 cards — Normal + TEAL only)
-* **Hand Layout:** Wrapping flex layout, no fixed max. Holds drawn cards and cards moved off the Table for end-of-turn discard.
+* **Table Layout:** Cards displayed in a 3×3 grid (normally max 9 cards — Normal + TEAL only); the three starting cards are face-up
+* **Hand Layout:** Wrapping flex layout, no fixed max. Holds drawn cards and cards moved off the Table for end-of-turn discard; unused Action cards persist across turns.
 * **Card Rearrangement:** Drag-and-drop, or tap-to-select then tap another slot to move/swap. Applies to the **Table** at any time. Reordering is local-only and is not sent to the server or synchronized to opponents.
 * **Font:** System default sans-serif, clean and legible
 
@@ -15,7 +15,8 @@
 ## 2. Card Visual Layouts
 
 ### 2.1 Normal & TEAL Cards
-* **Normal Card Background:** Solid card color (`#C0C0FF`, `#008080`, or `#C06060`).
+* **Normal Card Background:** One of five card colors (`#C0C0FF`, `#008080`, `#C06060`, `#884488`, `#404088`).
+* **Color-blind mode:** A persisted setting adds a distinct background pattern, glyph, and accessible color name.
 * **Center Shape:** Drawn in `#000000` (Black) in the center of the card.
 * **Shape Number:** Rendered inside the shape using the **same color as the card background**.
 * **TEAL (Wild) Card:** Teal background `#008080` with the black word **TEAL** centered vertically and horizontally. No star symbols, shape, or number; its number and shape are resolved only at set-validation time.
@@ -36,7 +37,7 @@
   * White-background action cards (CONCEAL, STEAL, REVEAL, APPEAL): **teal** (`#008080`) glow.
   * Face-down cards: **white** glow when selected/dragged.
 * **Dragging:** Same glow effect (4px ring) applied during drag-and-drop. A card preview follows the pointer while dragging, and the original card is dimmed.
-* **Revealed Indicator:** A small **eye icon badge** (top corner) plus the existing yellow (`#FACC15`) 2px ring border. Shown wherever the card renders — including on the *owner's own* Table view. A card always looks fully "normal" to its own owner regardless of reveal state, so the eye icon is the only cue telling them which of their own cards opponents can currently see.
+* **Revealed Indicator:** A small **eye icon badge** (top center) plus the existing yellow (`#FACC15`) 2px ring border. Shown wherever the card renders — including on the *owner's own* Table view. A card always looks fully "normal" to its own owner regardless of reveal state, so the eye icon is the only cue telling them which of their own cards opponents can currently see.
 * **Targetable:** White outline + yellow glow when a card can be targeted by an action.
 * **Disabled:** Dimmed/opacity reduced when not playable in the current phase or not a legal target (e.g. an already-Revealed card during a REVEAL targeting flow).
 
@@ -55,8 +56,9 @@
 * Displays generated Room Code (with click-to-copy functionality).
 * Player list showing joined members with distinct names and host indicator. Names are unique in a room, ignoring surrounding whitespace and letter case.
 * New players without a custom name are assigned the first available name in order: `Player 1`, `Player 2`, `Player 3`, and so on. Rejoining members retain their assigned name. A duplicate custom rename is rejected with clear feedback.
-* **Host Controls:** Kick member, rename room, start game.
-* **Member Controls:** Leave room, rename self.
+* **Host Controls:** Kick member, rename room, choose a 45/75/120-second turn limit, and start game.
+* **Member Controls:** Leave room, rename self. If a room code is invalid or unavailable, offer a return-home action and a create-lobby action using the entered code.
+* Player and spectator roles are selectable in the lobby; player capacity is determined by the number of starting Table cards in the deck (currently 59), with up to 8 spectators. Spectators may join an active game and see only public Tables.
 * Real-time updates when players join/leave.
 
 ### 3.3 Game Board View (`/game/:code`)
@@ -64,22 +66,20 @@
 * **Current Player Area:** split into two zones, laid out responsively by device orientation:
   * **Landscape:** Table on the left, Hand on the right.
   * **Portrait:** Table on top, Hand on bottom.
-  * **Table:** 3×3 grid, normally max 9 cards (a STEAL can temporarily exceed this until turn end), rearrangeable locally at any time by drag-and-drop and tap-to-select/tap-to-destination, each card showing Revealed/Concealed state with the eye-icon indicator where applicable.
+  * **Table:** 3×3 grid, normally max 9 cards (a STEAL can temporarily exceed this until turn end), rearrangeable locally at any time by drag-and-drop and tap-to-select/tap-to-destination. Three cards are dealt face-up at game start; their centered eye icon signals that opponents can see them.
   * **Hand:** wrapping row with no fixed maximum. All cards are drawn here first. Normal/TEAL cards can be moved to a chosen Table slot; when the Table has 9 cards, moving one swaps with the Table card at the chosen slot. Drag a Table card into the Hand to discard it.
-  * Every card left in Hand at turn end, including Action cards, is automatically discarded.
-* **Center Area:**
-  * Draw Deck (compact size, face down, shows remaining count)
-  * Discard Pile (compact size, face up showing top card)
+  * Normal and TEAL cards left in Hand at turn end are shuffled into the draw deck. Unused Action cards remain in Hand across turns.
+* **Center Area:** no draw or discard pile graphics. The remaining deck count stays in the turn status area; all discarded cards are shuffled directly into the deck.
   * Current game phase status indicator (DRAW / MAIN / INTERRUPT)
 * **Controls Area:**
   * **Draw Phase:** The game automatically draws one card at the start of the active player's turn.
   * **Main Phase:** "Play Selected", "Move Selected to Table" / "Swap with Selected Table Card", "Move Selected to Hand", and "End Turn" buttons
-  * **Interrupt Phase:** no persistent control here — replaced by the Appeal pop-up described in 4.3, which carries its own 30-second timer
-* **Opponent Areas:** each opponent's **Table** rendered as a 3×3 grid — Revealed cards shown face-up (with eye icon), Concealed cards shown as face-down backs — plus a separate **Hand count badge**; Hand contents are always hidden.
+  * **Interrupt Phase:** no persistent control here — replaced by the Appeal pop-up described in 4.3, which carries the server-selected 30-second timer
+* **Opponent Areas:** each opponent's **Table** rendered as a 3×3 grid — Revealed cards shown face-up (with eye icon), Concealed cards shown as face-down backs — plus online/away status. Opponent Hand counts and contents are hidden.
 
 ### 3.4 Hamburger Menu Pages (Overlay)
 * **Rules Page:** Full game rules recap (objective, valid patterns, turn flow, action cards), updated to reflect the current rules (3 patterns, Table/Hand zones, TEAL as a wild card). X button to return to game.
-* **Players Page:** Summary list of all players showing name, **Table count** and **Hand count** (replacing the old Normal/Action breakdown), and host status, with X button to return.
+* **Players Page:** Summary list showing name, **Table count**, only the viewer's own Hand count, and host status, with X button to return.
 
 ---
 
@@ -93,7 +93,7 @@
 5. Both methods work at any time (equivalent availability), allowing arrangement outside of a specific phase.
 6. The changed Table order updates locally without a server request. Other players continue to see the authoritative card identities and do not see local rearrangement.
 
-Hand-to-Table placement is a game action and is validated by the server. With fewer than 9 Table cards, move a selected Normal/TEAL card to a chosen slot; dropping on an occupied slot inserts the card there in the local Table layout. With 9 cards, select a Table card and move the selected Hand card, or drop on its slot; the cards swap zones. A Normal/TEAL Table card can be moved into Hand during the active turn, where it will be discarded at turn end. All other cards left in Hand are discarded then as well.
+Hand-to-Table placement is a game action and is validated by the server. With fewer than 9 Table cards, move a selected Normal/TEAL card to a chosen slot; dropping on an occupied slot inserts the card there in the local Table layout. With 9 cards, select a Table card and move the selected Hand card, or drop on its slot; the cards swap zones. Normal/TEAL cards left in Hand are recycled at turn end; unused Action cards remain in Hand.
 
 Cards can be dragged directly between Hand and Table as well as moved with the selection buttons. Dragging a Hand card onto a particular Table slot chooses its placement. Dragging a Table card within the Table changes only local display order.
 
@@ -110,22 +110,21 @@ After the winner and winning sets are shown, **Return to Lobby** opens the same 
 8. Implemented as a modal overlay with backdrop blur, matching the game's glass-panel aesthetic.
 
 ### 4.3 Interrupt / Appeal Flow
-1. When CONCEAL, STEAL, or REVEAL is played, the server checks whether any eligible player currently holds an APPEAL card.
-   * If **none** do, there's nothing to wait for — the action resolves immediately. No Interrupt window or pop-up is shown to anyone.
-   * If **at least one** does, the Interrupt Phase begins with a **30-second** window.
-2. **Only players who are both eligible *and* currently hold an APPEAL card** see a "Play APPEAL?" pop-up with **Yes / No** options:
+1. When CONCEAL, STEAL, or REVEAL is played, the server opens an interrupt window for **30 seconds**.
+2. Players who are both eligible *and* currently hold an APPEAL card see a "Play APPEAL?" pop-up with **Yes / No** options:
    * STEAL / REVEAL → the single targeted opponent, if they hold one.
    * CONCEAL → each opponent who holds one, independently, each with their own pop-up.
 3. Everyone else — non-eligible players, the acting player, and any eligible opponent who simply doesn't hold an APPEAL card — sees the same small, non-blocking "waiting on a decision…" notice. Nobody is shown a pop-up they can't act on, and the app never indicates *who specifically* was asked, since that would reveal who holds an APPEAL card.
-4. First "Yes" the server receives wins the race: that player's APPEAL is used, the original action is cancelled, both cards go to the discard pile, and any other open pop-ups close with a "resolved" message.
+4. First "Yes" the server receives wins the race: that player's APPEAL is used, the original action is cancelled, both cards are shuffled into the draw deck, and any other open pop-ups close with a "resolved" message.
 5. Clicking "No" closes only that player's own pop-up early — it has no effect on other eligible players still deciding.
-6. If nobody plays APPEAL within 30 seconds, all pop-ups close and the action resolves normally (skip).
+6. If nobody plays APPEAL before `resolveAt`, all prompts close and the action resolves normally.
 7. Game returns to MAIN phase once resolved.
 
 ### 4.4 Turn Transitions
 * Smooth visual transition between phases.
 * Clear indicator of whether it is **your** turn or another player's turn; never rely on names alone to identify the active player. If legacy room data contains duplicate names, explicitly indicate that the active player is another account with that name.
 * Automatic draw at the start of each active turn.
+* Game clients heartbeat every 15 seconds. Away or expired active turns are skipped; three consecutive misses forfeit the seat. Seat recovery uses a host-approved request by unique name, with spectator fallback on decline/timeout.
 * Discard animation when discarding.
 * Every server-bound action immediately shows a pending state (for example, “Submitting move…”), prevents duplicate submission of that action, and then shows confirmation when accepted or a clear error if rejected. When an action is waiting on another player or a server timer, explain that wait separately from request submission.
 
@@ -156,14 +155,14 @@ Layout is primarily driven by **viewport orientation** (see 3.3's Table/Hand spl
 |-----------|--------|
 | Card Components (Normal, Action, TEAL) | ✅ Implemented (TEAL word centered; no stars) |
 | Table Grid Layout (3×3) | ✅ Implemented |
-| Hand Layout and turn-end cleanup | ✅ Implemented (all cards left in Hand are discarded) |
+| Hand Layout and turn-end cleanup | ✅ Implemented (Normal/TEAL cards recycled; Action cards retained) |
 | Card Rearrangement (Drag-and-Drop + Tap-to-Move) | ✅ Implemented locally; not server-synchronized |
 | Unique Lobby Player Names and Numbered Defaults | ✅ Implemented |
 | Pending / Confirmed / Failed Server Action Feedback | ✅ Implemented |
 | Card Glow Effect / Revealed Eye Icon | ✅ Implemented |
 | Hamburger Menu (Rules, Players, leave/kick) | ✅ Implemented |
 | Game Board Layout (responsive Table/Hand split) | ✅ Implemented |
-| Draw Deck / Discard Pile UI | ✅ Implemented |
+| Deck/discard presentation | ✅ Pile graphics removed; discards recycled directly into the deck |
 | Phase Indicator | ✅ Implemented |
 | Action Targeting UI (revealed-direct / concealed-blind) | ✅ Implemented |
 | Interrupt/Appeal Pop-up (multi-responder, 30s) | ✅ Implemented |

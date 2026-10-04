@@ -6,16 +6,20 @@ import {
   leaveRoom,
   renamePlayer,
   renameRoom,
+  setLobbyRole,
+  setLobbyTurnDuration,
   startRoom,
   subscribeToRoom,
   type LobbyRoom
 } from '../lib/rooms';
+import { GAME_CONFIG } from '../logic/config';
 
 interface LobbyPageProps {
   roomCode: string;
   onStartGame: () => void;
   onLeave: () => void;
   onRenameRoom: (newCode: string) => void;
+  onCreateRoom: (roomCode: string) => Promise<string>;
 }
 
 const buttonStyle: React.CSSProperties = {
@@ -33,7 +37,7 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : 'Something went wrong. Please try again.';
 }
 
-export default function LobbyPage({ roomCode, onStartGame, onLeave, onRenameRoom }: LobbyPageProps) {
+export default function LobbyPage({ roomCode, onStartGame, onLeave, onRenameRoom, onCreateRoom }: LobbyPageProps) {
   const [room, setRoom] = useState<LobbyRoom | null>(null);
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [playerName, setPlayerName] = useState(() => sessionStorage.getItem('3eal-player-name') ?? 'Player 1');
@@ -109,6 +113,9 @@ export default function LobbyPage({ roomCode, onStartGame, onLeave, onRenameRoom
     () => Object.values(room?.players ?? {}).sort((a, b) => a.joinedAt - b.joinedAt),
     [room?.players]
   );
+  const playerCount = players.filter((player) => (player.role ?? 'PLAYER') === 'PLAYER').length;
+  const spectatorCount = players.length - playerCount;
+  const myRole = room?.players[playerId ?? '']?.role ?? 'PLAYER';
 
   const runAction = async (action: string, callback: () => Promise<void>) => {
     setBusyAction(action);
@@ -153,15 +160,32 @@ export default function LobbyPage({ roomCode, onStartGame, onLeave, onRenameRoom
   });
 
   const handleLeave = () => runAction('leave', async () => {
-    await leaveRoom(roomCode);
+    if (room) await leaveRoom(roomCode);
     sessionStorage.removeItem('3eal-room-code');
     sessionStorage.removeItem('3eal-room-players');
     onLeave();
   });
 
+  const handleCreateRoom = () => runAction('create-room', async () => {
+    const newCode = await onCreateRoom(roomCode);
+    onRenameRoom(newCode);
+  });
+
   const handleStartGame = () => runAction('start', async () => {
     await startRoom(roomCode);
     onStartGame();
+  });
+
+  const switchRole = () => runAction('role', async () => {
+    const nextRole = myRole === 'PLAYER' ? 'SPECTATOR' : 'PLAYER';
+    await setLobbyRole(roomCode, nextRole);
+    setNotice(`You joined as a ${nextRole === 'PLAYER' ? 'player' : 'spectator'}.`);
+  });
+
+  const updateTurnDuration = (value: string) => runAction('turn-duration', async () => {
+    const duration = Number(value);
+    await setLobbyTurnDuration(roomCode, duration);
+    setNotice(`Turn limit set to ${duration / 1_000} seconds.`);
   });
 
   return (
@@ -196,8 +220,22 @@ export default function LobbyPage({ roomCode, onStartGame, onLeave, onRenameRoom
             </div>
           </div>
 
+          {!room && !loading && error ? (
+            <div className="rounded-xl border border-rose-300/30 bg-rose-950/20 p-5 text-center">
+              <h3 className="mb-2 text-lg font-semibold">Unable to join this room</h3>
+              <p className="mb-5 text-sm text-white/70">{error}</p>
+              <div className="flex flex-wrap justify-center gap-3">
+                <button type="button" style={buttonStyle} onClick={handleLeave} disabled={busyAction !== null}>
+                  Back to Main Screen
+                </button>
+                <button type="button" style={buttonStyle} onClick={handleCreateRoom} disabled={busyAction !== null}>
+                  {busyAction === 'create-room' ? 'Creating Lobby…' : 'Create Lobby with This Code'}
+                </button>
+              </div>
+            </div>
+          ) : <>
           <div className="mb-7 flex items-center justify-between gap-3">
-            <h3 className="text-lg font-semibold">Players ({players.length})</h3>
+            <h3 className="text-lg font-semibold">Players ({playerCount}) · Spectators ({spectatorCount})</h3>
             <span className="text-sm text-white/60" aria-live="polite">Live lobby</span>
           </div>
 
@@ -211,6 +249,9 @@ export default function LobbyPage({ roomCode, onStartGame, onLeave, onRenameRoom
                 <li key={player.id} className="flex items-center justify-between gap-3 rounded-xl border border-white/20 p-4">
                   <span className="font-semibold">{player.name}{player.id === playerId ? ' (You)' : ''}</span>
                   <div className="flex items-center gap-2">
+                    <span className="rounded-full border border-white/25 px-3 py-1 text-sm text-white/70">
+                      {player.role === 'SPECTATOR' ? 'Spectator' : 'Player'}
+                    </span>
                     {room?.hostId === player.id && (
                       <span className="rounded-full border border-teal-300 px-3 py-1 text-sm text-teal-100">Host</span>
                     )}
@@ -232,6 +273,16 @@ export default function LobbyPage({ roomCode, onStartGame, onLeave, onRenameRoom
           )}
 
           <div className="space-y-4 border-t border-white/20 pt-5">
+            {isLobbyOpen && playerId !== room?.hostId && (
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-sm text-white/75">
+                  You are joining as a {myRole === 'SPECTATOR' ? 'spectator' : 'player'}.
+                </p>
+                <button type="button" style={buttonStyle} disabled={busyAction !== null} onClick={switchRole}>
+                  Switch to {myRole === 'PLAYER' ? 'Spectator' : 'Player'}
+                </button>
+              </div>
+            )}
             <label className="block">
               <span className="mb-2 block text-sm text-white/80">Rename yourself</span>
               <div className="flex flex-wrap gap-2">
@@ -266,16 +317,33 @@ export default function LobbyPage({ roomCode, onStartGame, onLeave, onRenameRoom
             )}
 
             {isHost && isLobbyOpen && (
+              <label className="block">
+                <span className="mb-2 block text-sm text-white/80">Turn time limit</span>
+                <select
+                  value={room?.turnDurationMs ?? GAME_CONFIG.defaultTurnDurationMs}
+                  disabled={busyAction !== null}
+                  onChange={(event) => void updateTurnDuration(event.target.value)}
+                  className="min-h-11 rounded-lg border border-white/30 bg-black px-3 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-400"
+                >
+                  {GAME_CONFIG.turnDurationOptionsMs.map((duration) => (
+                    <option key={duration} value={duration}>{duration / 1_000} seconds</option>
+                  ))}
+                </select>
+                <p className="mt-2 text-xs text-white/60">Three consecutive missed turns forfeit a seat.</p>
+              </label>
+            )}
+
+            {isHost && isLobbyOpen && (
               <>
                 <button
                   type="button"
-                  disabled={busyAction !== null || loading || room?.status !== 'LOBBY' || players.length < 2}
+                  disabled={busyAction !== null || loading || room?.status !== 'LOBBY' || playerCount < 2}
                   onClick={() => void handleStartGame()}
                   className="min-h-12 w-full rounded-xl bg-white px-5 py-3 font-bold text-black hover:bg-teal-100 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-400"
                 >
                   {busyAction === 'start' ? 'Starting…' : 'Start Game'}
                 </button>
-                {players.length < 2 && <p className="text-center text-sm text-white/60">At least two players must join before the game can start.</p>}
+                {playerCount < 2 && <p className="text-center text-sm text-white/60">At least two players must join before the game can start.</p>}
               </>
             )}
             {room?.status === 'FINISHED'
@@ -284,6 +352,7 @@ export default function LobbyPage({ roomCode, onStartGame, onLeave, onRenameRoom
           </div>
           {error && <p className="mt-4 text-center text-sm text-rose-300" role="alert">{error}</p>}
           {notice && <p className="mt-4 text-center text-sm text-teal-100" role="status">{notice}</p>}
+          </>}
         </section>
       </div>
     </main>

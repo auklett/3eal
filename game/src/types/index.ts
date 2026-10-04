@@ -1,4 +1,4 @@
-export type CardColor = 'C0C0FF' | '008080' | 'C06060';
+export type CardColor = 'C0C0FF' | '008080' | 'C06060' | '884488' | '404088';
 export type CardShape = 'circle' | 'triangle' | 'square' | 'pentagon' | 'hexagon';
 export type ActionType = 'CONCEAL' | 'STEAL' | 'REVEAL' | 'APPEAL';
 export type CardCategory = 'NORMAL' | 'WILD' | 'ACTION';
@@ -36,15 +36,21 @@ export type PendingAction = {
   actionType: Exclude<ActionType, 'APPEAL'>;
   targetCardId: string;
   wasBlindTarget: boolean;
-  appealWindowEndsAt: number;
+  resolveAt: number;
+  turnTimeRemainingMs?: number;
   resolvedByPlayerId?: string;
 };
 
 export type GameState = {
   deck: Card[];
-  discardPile: Card[];
   activePlayerId: string;
   turnNumber?: number;
+  version: number;
+  randomSeed: number;
+  turnDurationMs: number;
+  turnEndsAt?: number;
+  consecutiveMissedTurns?: Record<string, number>;
+  forfeitedPlayerIds?: string[];
   turnPhase: TurnPhase;
   pendingAction?: PendingAction;
   winnerId: string | null;
