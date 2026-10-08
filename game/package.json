@@ -3,29 +3,40 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "workspaces": [
+    "packages/engine"
+  ],
   "scripts": {
     "dev": "vite",
+    "dev:worker": "npm run build && wrangler dev",
     "build": "tsc -b && vite build",
-    "test": "vitest run",
+    "test": "vitest run --exclude='e2e/**'",
+    "test:e2e": "playwright test",
+    "simulate": "tsx simulator/cli.ts",
     "lint": "oxlint",
     "preview": "vite preview",
-    "pages:dev": "npm run build -- --mode pages-dev && wrangler pages dev dist"
+    "worker:typecheck": "wrangler types && tsc --noEmit -p tsconfig.worker.json",
+    "deploy": "npm run build && wrangler deploy"
   },
   "dependencies": {
-    "firebase": "^12.19.0",
+    "@3eal/engine": "*",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.0",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.4",
     "autoprefixer": "^10.5.4",
+    "fast-check": "^4.10.2",
     "oxlint": "^1.75.0",
     "postcss": "^8.5.26",
     "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.15",
     "typescript": "~6.0.2",
     "vite": "^8.2.0",
     "vitest": "^5.0.3",

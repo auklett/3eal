@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": [],
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "verbatimModuleSyntax": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": [
+    "worker/**/*.ts",
+    "src/shared/protocol.ts",
+    "packages/engine/src/**/*.ts",
+    "worker-configuration.d.ts"
+  ],
+  "exclude": ["packages/engine/src/**/*.test.ts", "worker/**/*.test.ts"]
+}

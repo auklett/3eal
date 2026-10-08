@@ -4,37 +4,37 @@
 
 ### 1.1 Card Schema
 ```typescript
-type CardCategory = 'NORMAL' | 'WILD' | 'ACTION';
-type CardColor = 'C0C0FF' | '008080' | 'C06060';
+type CardCategory = 'normal' | 'teal' | 'action';
+type CardColor = 'periwinkle' | 'teal' | 'rose' | 'grape' | 'frenchBlue';
 type CardShape = 'circle' | 'triangle' | 'square' | 'pentagon' | 'hexagon';
 type ActionType = 'CONCEAL' | 'STEAL' | 'REVEAL' | 'APPEAL';
 
 interface Card {
-  id: string; // Unique instance ID (e.g., "card_042")
-  category: CardCategory;
+  id: string; // Random opaque instance ID
+  kind: CardCategory;
   isRevealed: boolean; // Only meaningful for NORMAL/WILD cards while on a Table
 
   // Normal & Wild Card Attributes (undefined for pure ACTION cards)
-  color?: CardColor;   // WILD is always '008080'
-  number?: number;     // 1-7; unset for WILD until resolved at set-check time
-  shape?: CardShape;   // unset for WILD until resolved at set-check time
+  color?: CardColor;   // TEAL is always Teal
+  number?: number;     // 1-7; TEAL adopts any number for a set check
+  shape?: CardShape;   // TEAL adopts any shape for a set check
 
   // Action Card Attributes (undefined for NORMAL/WILD cards)
-  actionType?: ActionType;
-  title?: string;
-  description?: string;
+  action?: ActionType;
 }
 ```
 
 ### 1.2 Player Schema
 ```typescript
 interface Player {
-  id: string;
+  id: string; // Public participant ID; never used as a session credential
+  sessionIds: string[]; // Private reconnect credentials; never included in views
   name: string; // Unique within a room, compared after trimming and case folding
   isHost: boolean;
   table: Card[]; // NORMAL + WILD cards only, max 9
   hand: Card[];  // Private zone for drawn cards and Table cards pending discard
-  sets: Array<{ cards: Card[] }>; // Firestore-safe representation of the winning partition
+  table: Card[]; // Private authoritative cards; clients receive filtered views
+  hand: Card[];  // Private authoritative hand
 }
 ```
 
@@ -81,15 +81,17 @@ interface RoomState {
 
 ## 2. Deck Generation & Combinations
 
-- **Normal Deck:** Color (3) × Number (7) × Shape (5) = **105 Normal Cards**
+- **Normal Deck:** Color (5) × Number (7) × Shape (5) = **175 Normal Cards**
 - **Wild Deck:** **3 TEAL Cards** — fixed color, flexible number/shape
-- **Action Deck:** 3 copies × 4 types = **12 Action Cards**
-- **Total Deck Size:** **120 Cards**
+- **Action Deck:** 10 copies × 4 types = **40 Action Cards**
+- **Total Deck Size:** **218 Cards**
 
 ### Normal Card Colors:
 - `C0C0FF` — Periwinkle
 - `008080` — Teal
 - `C06060` — Rose
+- `884488` — Grape Soda
+- `404088` — French Blue
 
 ### Normal Card Numbers: 1–7
 
@@ -102,7 +104,7 @@ interface RoomState {
 4. **APPEAL** — Block an opponent's CONCEAL, STEAL, or REVEAL
 
 ### Wild Card:
-- **TEAL** — fixed Teal color (`008080`), flexible shape/number. Drawn into Hand first, then may be moved to the Table during Main; any TEAL left in Hand at turn end is discarded.
+- **TEAL** — fixed Teal color (`008080`), flexible shape/number. Drawn into Hand first, then may be moved to the Table during Main.
 
 ## 3. Action Handlers & Rules Engine
 
@@ -131,7 +133,7 @@ interface RoomState {
 - **Trigger:** During the INTERRUPT phase, by a player eligible under the action's targeting rule and holding an APPEAL card. Eligibility is checked against private server state and is not broadcast as a player list.
 - **Effect:** Cancels `pendingAction`; both the original action card and the APPEAL card move to the discard pile.
 - **Race Resolution:** If multiple eligible players attempt APPEAL (only possible for CONCEAL, which can have several eligible players), resolve via an atomic transaction — the first write wins and sets `pendingAction.resolvedByPlayerId`; subsequent attempts are rejected server-side.
-- **Window:** 30 seconds from `pendingAction` creation. If it elapses with no successful APPEAL, `pendingAction` resolves normally (skip) and `turnPhase` returns to `MAIN`.
+- **Window:** At most 30 seconds from action creation. The window closes as soon as an APPEAL wins or all eligible players pass; players without APPEAL pass automatically. The turn timer is paused until the interrupt resolves.
 
 ### 3.5 TEAL (Wild Card — not an action)
 - Lives on the Table alongside Normal cards; dealt and drawn the same way.
@@ -148,7 +150,7 @@ interface RoomState {
    - Discard any number of Normal/WILD cards from their Table.
    - Play CONCEAL, STEAL, or REVEAL from their Hand — each triggers INTERRUPT.
 3. **INTERRUPT** — Eligible player(s) have 30 seconds to play APPEAL; if none do, the action resolves and phase returns to MAIN.
-4. **End Turn** — All cards left in Hand are discarded automatically. If a STEAL left more than 9 cards on the Table, move cards into Hand to discard them. Check for a win, then pass the turn.
+4. **End Turn** — Non-APPEAL cards left in Hand are discarded; unplayed APPEAL cards persist between turns. If a STEAL left more than 9 cards on the Table, move cards into Hand to discard them. Check for a win, then pass the turn. The default turn timer is 60 seconds and the host may set it to 15–180 seconds in the lobby.
 
 ## 5. Win Condition Validation (Pattern Engine)
 
@@ -176,7 +178,7 @@ A set of 3 Table cards is valid if it meets **at least one** of these patterns:
 - **Resolved (previously an open question):** earlier drafts worried about a tie-break for "the" completed set when multiple valid groupings exist. That question only mattered for *protecting* set cards from STEAL — and since STEAL can already target any Table card regardless of set membership (rules.md §9), there's nothing left to protect, so no tie-break is needed for correctness.
   - `checkWinCondition()` only needs to confirm *some* valid partition of the 9 Table cards into 3 sets exists — an existence check, not an identification of specific groupings.
   - Mid-game progress display (e.g. "2/3 sets" on the Players page) only needs a count — `completeSetCount()` finds the maximum number of disjoint valid sets in the current Table via a greedy/max-matching search. Which exact cards land in which set doesn't need to be pinned down until the win moment.
-  - `findBestPartition()` identifies a winning partition. It is stored as an array of `{ cards: Card[] }` objects because Firestore does not support nested arrays.
+  - The pure shared engine searches all 280 ways to partition nine cards into three sets and accepts any valid partition; it does not store a special winning partition.
 
 ## 6. Implementation Files
 
@@ -184,11 +186,13 @@ Table-card arrangement is presentation order only: a player may move or swap the
 
 Client commands should provide immediate pending feedback while waiting on the authoritative server response, then show a confirmed result or a recoverable error. A pending indicator acknowledges that a request was sent; it must not claim that the state has already changed.
 
-Active-game leave and host-kick operations transactionally discard the departing player's cards, remove their sanitized view, and hand host status to the earliest remaining member. If the departing player was active, the next remaining member starts a DRAW phase. A single remaining player may continue; removing the final member deletes the room and private state.
+The Cloudflare Worker routes each room to its SQLite-backed `GameRoom` Durable Object. It persists authoritative state in one row and broadcasts a full, role-filtered snapshot. Public participant IDs and private session IDs are separate; views never contain session IDs, hands, deck order, or concealed card identities belonging to another player. Spectators receive the same public data as opponents.
 
 | File | Purpose |
 |------|---------|
-| `src/logic/deck.ts` | Deck generation (105 Normal + 3 WILD + 12 Action), shuffling |
-| `src/logic/validation.ts` | `validateSet()`, `findBestPartition()`, `checkWinCondition()`, pattern matchers |
-| `src/logic/gameEngine.ts` | State machine: `initializeGame`, `drawCard`, `moveCardToTable`, `playCard`, `resolveAction`, `playAppeal` (atomic), `endTurn` |
-| `src/types/index.ts` | All TypeScript type definitions |
+| `game/packages/engine/src/deck.ts` | Seeded deck generation and shuffling |
+| `game/packages/engine/src/sets.ts` | Set validation, maximum complete-set count, and 9-card partition search |
+| `game/packages/engine/src/room.ts` | Pure room lifecycle, turn, timer, away, and rejoin reducers |
+| `game/packages/engine/src/interrupts.ts` | Appeal eligibility, automatic pass, and interrupt resolution |
+| `game/worker/gameRoom.ts` | Durable Object persistence, WebSocket views, and alarms |
+| `game/worker/views.ts` | Player/spectator filtering of authoritative state |

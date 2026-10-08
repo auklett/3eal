@@ -3,8 +3,8 @@ import HomePage from './pages/HomePage';
 import RulesOverlay from './components/game/RulesOverlay';
 import './App.css';
 
-const GameBoard = lazy(() => import('./pages/GameBoard'));
-const LobbyPage = lazy(() => import('./pages/LobbyPage'));
+const WorkerGameBoard = lazy(() => import('./pages/WorkerGameBoard'));
+const WorkerLobbyPage = lazy(() => import('./pages/WorkerLobbyPage'));
 
 type Route =
   | { page: 'home' }
@@ -30,6 +30,29 @@ function App() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    void fetch('/api/config')
+      .then(async (response) => {
+        if (!response.ok) return null;
+        return response.json() as Promise<{ webAnalyticsToken?: string }>;
+      })
+      .then((config) => {
+        if (cancelled || !config?.webAnalyticsToken) return;
+        if (document.querySelector('script[data-3eal-analytics]')) return;
+        const beacon = document.createElement('script');
+        beacon.src = 'https://static.cloudflareinsights.com/beacon.min.js';
+        beacon.defer = true;
+        beacon.dataset['3ealAnalytics'] = 'true';
+        beacon.dataset.cfBeacon = JSON.stringify({ token: config.webAnalyticsToken });
+        document.head.append(beacon);
+      })
+      .catch((error: unknown) => {
+        console.error('Cloudflare Web Analytics configuration could not be loaded.', error);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
   const navigate = useCallback((path: string) => {
     if (window.location.pathname === path) return;
     window.history.pushState({}, '', path);
@@ -40,7 +63,6 @@ function App() {
     () => navigate(`/game/${route.page === 'lobby' ? route.roomCode : ''}`),
     [navigate, route]
   );
-  const handleRenameRoom = useCallback((code: string) => navigate(`/lobby/${code}`), [navigate]);
   const handleOpenLobby = useCallback((roomCode: string) => navigate(`/lobby/${roomCode}`), [navigate]);
   const handleReturnToLobby = useCallback((roomCode: string) => {
     window.location.assign(`/lobby/${roomCode}`);
@@ -49,10 +71,9 @@ function App() {
   if (route.page === 'lobby') {
     return (
       <Suspense fallback={<main className="min-h-screen bg-black p-8 text-center text-white" role="status">Loading room…</main>}>
-        <LobbyPage
+        <WorkerLobbyPage
           roomCode={route.roomCode}
           onLeave={handleLeaveRoom}
-          onRenameRoom={handleRenameRoom}
           onStartGame={handleStartGame}
         />
       </Suspense>
@@ -62,7 +83,7 @@ function App() {
   if (route.page === 'game') {
     return (
       <Suspense fallback={<main className="min-h-screen bg-black p-8 text-center text-white" role="status">Loading game…</main>}>
-        <GameBoard
+        <WorkerGameBoard
           key={route.roomCode}
           roomCode={route.roomCode}
           onLeave={handleLeaveRoom}
@@ -76,9 +97,26 @@ function App() {
     <>
       <HomePage
         onJoinRoom={handleOpenLobby}
-        onCreateRoom={async () => {
-          const { createRoom } = await import('./lib/rooms');
-          return createRoom(sessionStorage.getItem('3eal-player-name') ?? 'Player 1');
+        useTurnstile
+        onCreateRoom={async (name, turnstileToken) => {
+          const response = await fetch('/api/rooms', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, turnstileToken })
+          });
+          const payload: unknown = await response.json();
+          if (!response.ok) {
+            const message = typeof payload === 'object' && payload !== null && 'error' in payload
+              ? String(payload.error)
+              : 'Unable to create a room.';
+            throw new Error(message);
+          }
+          if (typeof payload !== 'object' || payload === null
+            || !('roomCode' in payload) || typeof payload.roomCode !== 'string'
+            || !('sessionId' in payload) || typeof payload.sessionId !== 'string') {
+            throw new Error('The room service returned an invalid response.');
+          }
+          return { roomCode: payload.roomCode, sessionId: payload.sessionId };
         }}
         onRules={() => setShowRules(true)}
       />

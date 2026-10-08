@@ -1,174 +1,70 @@
 # 3EAL
 
-3EAL is a strategic card game about collecting and protecting sets. Build three valid sets of three cards before your opponents, while using action cards to disrupt their plans.
+3EAL is a browser-based multiplayer card game. Create a room, invite players by room code, and build three valid sets of three cards before your opponents.
 
-The application includes a polished Home screen, a Firebase-backed live Lobby, an interactive Game Board, and shared Rules overlays. Lobby and authoritative gameplay state synchronize across browsers through Firebase and Cloudflare Pages Functions.
+## Rules overview
 
-## Game overview
+- **Deck:** 218 cards — 175 Normal, 3 TEAL wild, and 40 Action cards (10 each of CONCEAL, STEAL, REVEAL, APPEAL).
+- **Colors:** Periwinkle (`C0C0FF`), Teal (`008080`), Rose (`C06060`), Grape Soda (`884488`), French Blue (`404088`).
+- **Sets:** Three cards sharing a color, number, or shape. TEAL is always Teal for color sets and can adopt any number or shape otherwise.
+- **Interrupts:** CONCEAL, STEAL, and REVEAL allow eligible opponents to APPEAL during a maximum 30-second window.
+- **Turns:** 60 seconds by default; the host can choose 15–180 seconds in the lobby. The timer pauses during interrupts.
+- **APPEAL:** Unplayed APPEAL cards persist in Hand between turns until played; other unused Hand cards are discarded at turn end.
 
-- **Players:** 2 or more to start; remaining players may continue if others leave mid-game
-- **Deck:** 120 cards — 105 Normal, 3 TEAL wild, and 12 Action cards
-- **Objective:** Be the first to have 9 cards on your Table that form 3 valid sets
-- **Valid sets:** Three cards sharing a color, number, or shape
-- **TEAL:** A wild card with fixed Teal color that can adopt any number or shape when completing a set
+Read the full [rules](docs/rules.md).
 
-Action cards are **CONCEAL**, **STEAL**, **REVEAL**, and **APPEAL**. CONCEAL, STEAL, and REVEAL open an interrupt window; the eligible player or players can use APPEAL to cancel the action. The current game implementation uses a 30-second window.
+## Architecture
 
-Drawing happens automatically when your turn begins. Every drawn card goes to your private Hand first. During Main, Normal and TEAL cards may be moved to an open Table slot; with 9 cards on the Table, moving one swaps it with a selected Table card. To discard a Table card, move it to your Hand. All cards left in Hand—including Action cards—are discarded automatically at turn end. Table rearrangement is local-only and is not sent to the server or shown to opponents.
+- React 19 + TypeScript + Vite client, served as Workers static assets from the same origin as the API.
+- A Cloudflare Worker routes room creation and WebSocket connections.
+- One SQLite-backed `GameRoom` Durable Object stores each room's authoritative game state in one row. WebSockets use the Hibernation API; the object persists every accepted action and uses one alarm for turn, interrupt, rejoin, and away deadlines.
+- The pure TypeScript rules engine in [`game/packages/engine/`](game/packages/engine/) is shared by the Worker and browser.
+- Card IDs and deck order are generated from a per-game seeded RNG; the seed and hidden card identities stay server-side.
+- Each socket receives a full filtered snapshot: a player gets public data plus their own hand and concealed cards; a spectator gets public data only. Spectators receive exactly what opponents see.
+- Cloudflare Turnstile protects room creation. Cloudflare Web Analytics is loaded when its token is configured.
 
-For the complete rules and card details, see [`docs/rules.md`](docs/rules.md).
+There are no accounts or chat. Identity is a room code and unique player name. The host approves new-session rejoin requests.
 
-## Current implementation status
+## Local development
 
-### Implemented
-
-- Local game engine for drawing, action resolution, turn flow, and win checks
-- Set validation and partition search, including TEAL wild cards
-- Game Board with Table and Hand, server-validated card moves/swaps and action targeting, and player/rules menus
-- Home screen with room-code entry, room creation, and Rules access
-- Live Firebase Lobby with unique player names, numbered defaults, room creation/joining, roster updates, player and room renaming, host kick, leave, host handoff, and host start
-- Firebase anonymous authentication for lobby player identity
-- Server-authoritative game state and mutation API hosted in Cloudflare Pages Functions
-- Table-card rearrangement by tap or drag, stored locally and never sent to the server; drag previews follow the pointer
-- Hand-to-Table drag placement targets a specific slot; Table cards can be dragged to Hand during the active turn
-- Game-over screen shows the winner's sets and returns to that room's lobby
-- Immediate pending, accepted, and failed feedback for server-bound game actions
-- Per-player sanitized Firestore game views; the canonical deck, hands, and concealed card identities are server-only
-- Client-denying Firestore rules configured and exercised in the local emulator
-- Active-game leave/kick handling with card discard, turn-order updates, host handoff, and continued single-player play
-- Vitest game-engine unit tests and GitHub Actions CI for tests, lint, and build
-
-### Remaining work
-
-Production Firestore rules and Cloudflare Pages bindings still need to be verified and deployed. Integration coverage, manual device/accessibility checks, and operational recovery validation remain. Optional bot, tutorial, sound, spectator, history, and alternate-variant ideas remain post-MVP. See [`docs/roadmap.md`](docs/roadmap.md).
-
-## Quick start
-
-### Requirements
-
-- Node.js and npm
-- Firebase CLI, for running the local Auth and Firestore emulators
-
-### Configure Firebase
-
-The app connects to the Auth emulator at `localhost:9099` and Firestore emulator at `localhost:8080` in development. Provide the Firebase web-app configuration values in `game/.env.local`:
-
-```dotenv
-VITE_FIREBASE_API_KEY=your-api-key
-VITE_FIREBASE_AUTH_DOMAIN=your-auth-domain
-VITE_FIREBASE_PROJECT_ID=your-project-id
-VITE_FIREBASE_STORAGE_BUCKET=your-storage-bucket
-VITE_FIREBASE_MESSAGING_SENDER_ID=your-messaging-sender-id
-VITE_FIREBASE_APP_ID=your-app-id
-```
-
-Do not commit `.env.local`. The emulator configuration is in [`game/firebase.json`](game/firebase.json).
-
-### Start the full local app
-
-In one terminal:
+Requirements: Node.js 22+, npm, and a Cloudflare account only if you want to deploy.
 
 ```bash
 cd game
-npm install
-npx firebase-tools emulators:start --project eal-5d762 --only auth,firestore
-```
-
-Use the same project ID as `VITE_FIREBASE_PROJECT_ID` in `.env.local`; otherwise, the emulator can issue tokens for a different project that the app will reject.
-
-In a second terminal, configure the Pages emulator bindings once and run the local Pages Functions runtime:
-
-```bash
-cd game
+npm ci
 cp .dev.vars.example .dev.vars
-npm run pages:dev
 ```
 
-Provide the public Firebase web-app values in the ignored `game/.env.local` file above. Open the Pages dev URL printed by Wrangler (normally **http://localhost:8788**). `npm run dev` runs Vite alone and does not serve the Pages API.
+Set a Turnstile **secret key** in the ignored `game/.dev.vars` file and a matching public site key in `game/wrangler.toml` under `[vars]`. You may use Cloudflare's documented Turnstile test keys for local development. Do not commit secret keys. Web Analytics is optional locally; configure its site token in `WEB_ANALYTICS_TOKEN` when available.
 
-### Cloudflare Pages deployment
-
-The Cloudflare Pages project builds from `game/` with `npm run build` and publishes `dist/`. Pages Functions are in `game/functions/`.
-
-Configure the public Firebase web-app values (`VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_STORAGE_BUCKET`, `VITE_FIREBASE_MESSAGING_SENDER_ID`, and `VITE_FIREBASE_APP_ID`) as Cloudflare **build variables** in each environment that should use Firebase. `VITE_` values are embedded in the browser bundle during the build and are not secrets.
-
-Set `FIREBASE_PROJECT_ID` as a Pages Function runtime variable. Add `FIREBASE_SERVICE_ACCOUNT` as an encrypted **secret** binding containing the complete JSON key for a dedicated service account granted only the Cloud Datastore User role (`roles/datastore.user`). Do not put the service-account JSON in source control, `wrangler.toml`, a build variable, or any `VITE_` variable. Redeploy after changing build variables or Function secrets so the new deployment uses the configuration.
-
-The browser can read lobby metadata and only its own sanitized `rooms/{roomCode}/views/{uid}` game document. The authoritative deck, hands, and concealed card identities are stored in `rooms/{roomCode}/private/state`; client Firestore rules should deny direct access to that state and deny client writes. Game and lobby mutations pass through the Pages Functions API, which uses Firestore REST transactions. The API verifies Firebase ID tokens against Google's public signing certificates.
-
-`game/firestore.rules` is connected to `game/firebase.json` for local emulator testing. Verify and deploy the reviewed rules to the production Firebase project separately.
-
-For local development, start Firebase emulators with the same project ID used by `.env.local` and `.dev.vars`:
+Run the full Worker + static-asset app:
 
 ```bash
-cd game
-npx firebase-tools emulators:start --project eal-5d762 --only auth,firestore
+npm run dev:worker
 ```
 
-Without `--project`, the Firebase CLI can select `demo-no-project`, causing sign-in tokens to be rejected when the configured project is `eal-5d762`.
+The app is served at the URL printed by Wrangler (usually `http://localhost:8787`). `npm run dev` starts Vite alone and does not run the Worker API.
 
-### Available scripts
+## Checks
 
-Run these from `game/`:
+Run from `game/`:
 
 | Command | Description |
 |---|---|
-| `npm run dev` | Start the Vite development server |
-| `npm run build` | Run TypeScript project builds and create a production bundle |
-| `npm run preview` | Preview the production build locally |
-| `npm run pages:dev` | Build the emulator-configured frontend and serve Pages Functions locally |
-| `npm run lint` | Run OxLint |
-| `npm test` | Run Vitest game-engine unit tests |
+| `npm test` | Vitest unit and property tests |
+| `npm run test:e2e` | Playwright hidden-information flow |
+| `npm run lint` | OxLint |
+| `npm run build` | TypeScript build and Vite assets |
+| `npm run worker:typecheck` | Generate Worker types and type-check Worker sources |
+| `npm run simulate` | Run the seeded Monte Carlo bot simulator |
+| `npm run deploy` | Build and deploy with Wrangler |
 
-## Project structure
+The simulator reports average turns and simulated minutes to win, first-player win rate, STEAL/APPEAL set-loss swings, and average player turns to the first set. Its default 30-second simulated bot turn is an explicit timing assumption; override it and the number of games with `SIM_TURN_SECONDS` and `SIM_GAMES`. The 15–25 minute target is reported for comparison.
 
-```text
-game/
-├── src/
-│   ├── components/
-│   │   ├── cards/       # Normal, Action, and shared card UI
-│   │   └── game/        # Menus, action targeting, and rules
-│   ├── lib/             # Firebase initialization and room/game API subscriptions
-│   ├── logic/           # Deck generation, validation, and authoritative game rules
-│   ├── pages/           # Home, Lobby, and Game Board views
-│   ├── types/           # Game and card TypeScript types
-│   ├── App.tsx          # Navigation and view composition
-│   └── index.css        # Tailwind CSS import and global styles
-├── functions/           # Cloudflare Pages Functions mutation API
-├── firestore.rules      # Client read/write access control
-├── firebase.json        # Firestore rules and local emulator configuration
-├── wrangler.toml        # Cloudflare Pages build/runtime configuration
-└── package.json         # Dependencies and npm scripts
+## Free-tier deployment
 
-docs/
-├── logic.md             # Data model and game logic
-├── rules.md             # Game rules
-├── tech-stack.md        # Architecture and technology notes
-├── ui-ux.md             # UI and interaction requirements
-└── roadmap.md           # Progress, known boundaries, and future work
-```
+The Wrangler configuration declares `GameRoom` as a SQLite-backed Durable Object in the first migration (`new_sqlite_classes`). Keep it SQLite-backed for the Workers Free plan. Add `TURNSTILE_SECRET_KEY` with `npx wrangler secret put TURNSTILE_SECRET_KEY`; set `TURNSTILE_SITE_KEY` and `WEB_ANALYTICS_TOKEN` in the Worker environment. Deploy with `npm run deploy`.
 
-## Technology
+GitHub Actions validates pull requests and deploys pushes to `main`. Add repository secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` to enable deployment.
 
-| Area | Technology |
-|---|---|
-| UI | React 19, TypeScript 6 |
-| Build/development | Vite 8 |
-| Styling | Tailwind CSS 4 |
-| Backend | Cloudflare Pages Functions, Firebase Authentication, and Cloud Firestore |
-| Local checks | OxLint and TypeScript build |
-
-See [`docs/tech-stack.md`](docs/tech-stack.md) for architecture details.
-
-## Documentation
-
-- This README contains local setup and deployment guidance.
-- [`docs/rules.md`](docs/rules.md) — Objective, cards, setup, valid sets, turns, and actions
-- [`docs/logic.md`](docs/logic.md) — Data schemas, engine behavior, deck, and validation
-- [`docs/ui-ux.md`](docs/ui-ux.md) — Views, design system, and interaction requirements
-- [`docs/tech-stack.md`](docs/tech-stack.md) — Technology and architecture
-- [`docs/roadmap.md`](docs/roadmap.md) — Completed work and remaining milestones
-
-## License
-
-MIT — See the repository license for details.
+Cloudflare's current [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/) and [Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/) document the free limits. Free-plan operations fail when a daily quota is exceeded and reset at 00:00 UTC; incoming WebSocket messages use 20:1 request billing and outgoing messages are free. Static asset requests are free. Cloudflare may change quotas, so re-check those pages before launch. The [Pages-to-Workers migration guide](https://developers.cloudflare.com/workers/static-assets/migration-guides/migrate-from-pages/) supports serving the client and Worker together.

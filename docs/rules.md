@@ -1,120 +1,84 @@
 # 3EAL — Official Game Rules
 
-## 1. Game Objective
+## Objective
 
-Be the first player to build **3 complete sets of 3 cards** (9 cards total, all on your Table, matching valid patterns) to win.
+Be the first player to build three valid sets of three cards (nine cards total) on your Table.
 
----
+## Cards
 
-## 2. Card Categories
+The 218-card deck contains:
 
-Three kinds of cards exist:
+| Category | Count | Notes |
+|---|---:|---|
+| Normal | 175 | 5 colors × 7 numbers × 5 shapes |
+| TEAL wild | 3 | Always Teal for color sets; may adopt any number or shape |
+| Action | 40 | 10 each of CONCEAL, STEAL, REVEAL, and APPEAL |
 
-| Category | Count | Lives In | Notes |
-|---|---|---|---|
-| **Normal** | 105 | Hand, then Table | 3 colors × 7 numbers × 5 shapes |
-| **TEAL** | 3 | Hand, then Table | Wild card — fixed Teal color; any number, any shape |
-| **Action** | 12 | Hand | 3 copies each of CONCEAL, STEAL, REVEAL, APPEAL |
+Normal-card colors are Periwinkle (`C0C0FF`), Teal (`008080`), Rose (`C06060`), Grape Soda (`884488`), and French Blue (`404088`). Shapes are Circle, Triangle, Square, Pentagon, and Hexagon. Normal numbers range from 1 to 7.
 
-**Total: 120 cards.**
+TEAL is a distinct wild card, not an ordinary Teal-colored Normal card. For a Same Color set it is always Teal. For Same Number or Same Shape sets it can adopt whatever value completes the set.
 
-> The TEAL card keeps the game's naming convention (3EAL — every action-adjacent card ends in "-EAL": CONCEAL, STEAL, REVEAL, APPEAL, TEAL). It's a distinct card from the ordinary Teal-colored Normal cards — those are 35 plain cards that happen to be Teal (fixed number and shape, no wildness). TEAL the card is the one wild card: always Teal-colored, but flexible on number and shape. Functionally it belongs to its own **Wild** category, separate from Normal and Action.
+## Zones and visibility
 
----
+- **Table:** Holds Normal and TEAL cards. Cards are either revealed (visible to everyone) or concealed (identity visible only to their owner). A STEAL may temporarily take a table above nine cards until end-of-turn cleanup.
+- **Hand:** Private and unbounded. Unplayed APPEAL cards remain in Hand across turns until played; all other cards left at turn end are discarded. No card in a Hand can be targeted.
+- Public views show every player's hand size, never hand contents. Players see their own hand and concealed cards. Spectators receive exactly the same public information as an opponent, with no private-card privileges.
+- Card IDs are random and must not encode card identity. Stealing preserves the card's reveal/conceal state; the thief can see it in their own private view.
 
-## 3. Zones
+## Valid sets and winning
 
-Each player has two separate zones:
+A valid set has exactly three Normal/TEAL cards that share a color, number, or shape. A TEAL card's color is fixed as Teal, but it can adopt any number or shape. Action cards cannot be part of a set.
 
-- **Table** — the public play area. Holds Normal cards and the TEAL card only. Normally holds at most 9 cards; a STEAL can temporarily exceed that until end-of-turn cleanup. Cards here are either **Revealed** (visible to all players) or **Concealed** (hidden, visible only to the owner) — see Section 9.
-- **Hand** — The private area. Holds Action cards and any Normal/TEAL cards drawn this turn but not yet moved to the Table. **No maximum size.** Always private; cards in Hand can never be targeted by another player's action.
+The win check searches for any valid partition of all nine Table cards into three valid sets. A nine-card table has 280 possible partitions; the game must not require a particular grouping or arrangement.
 
----
+## Setup
 
-## 4. Setup
+The room supports at least two players and has no configured maximum player count. Starting still requires enough Normal/TEAL cards to deal three Table cards to every player. New users join as players by default while the game is in the lobby; they can switch to spectator there. If the game has started, they join as spectators. Player joining is not capped by a configured limit.
 
-1. Each player is dealt **3 cards to their Table** and **0 cards to their Hand** at the start of the game.
-2. The remaining cards form the draw deck in the center.
-3. First player is randomly selected as the starting active player.
+Deal three cards to each player's Table, all concealed, and no cards to their Hand. The remaining cards form the draw deck. Choose the first active player randomly.
 
----
+## Turn flow
 
-## 5. Valid Set Patterns
+Each turn has a default 60-second timer. The room owner may change it in the lobby before the game starts, from 15 through 180 seconds.
 
-A set = 3 cards on your Table satisfying **any one** of these 3 criteria:
+### Draw
 
-* **Same Color:** 3 cards of color `C0C0FF` (Periwinkle), `008080` (Teal), or `C06060` (Rose)
-* **Same Number:** 3 cards sharing the same digit (1 to 7)
-* **Same Shape:** 3 cards sharing the same shape (Circle, Triangle, Square, Pentagon, or Hexagon)
+At turn start, draw one card into your Hand. If the deck is empty, shuffle the discard pile into a new deck. If both are empty, no card is drawn.
 
-### Special: TEAL Cards
-TEAL cards are the game's wild cards — always Teal in color, but they can adopt **any number and any shape** to complete a Same Number or Same Shape set. They don't add anything extra to a Same Color set beyond simply being Teal, same as any other Teal-colored Normal card.
+### Main
 
----
+You may perform these actions in any order and as often as desired:
 
-## 6. Turn Flow
+- Move a Normal or TEAL card from your Hand to an open Table position.
+- If your Table has nine cards, swap a Hand Normal/TEAL card for a Table card; the replaced card goes to your Hand.
+- Move a Table card to your Hand. It is discarded at turn end.
+- Play CONCEAL, STEAL, or REVEAL from your Hand. This opens an interrupt unless it is immediately resolved because no eligible player holds APPEAL.
+- End your turn.
 
-On your turn, execute the following phases in order:
+### Interrupts
 
-### 6.1 Draw Phase
-The game automatically draws **1 card** when your turn begins. It always goes to your **Hand** first. During Main, move a Normal or TEAL card from your Hand to your Table; if your Table already has 9 cards, choose a Table card to swap out, and the replaced card returns to your Hand.
+Playing CONCEAL, STEAL, or REVEAL opens an interrupt with a maximum duration of 30 seconds. The turn timer pauses and resumes with its remaining time once the interrupt ends.
 
-If the deck is empty, the discard pile is shuffled to form a new deck.
+- For STEAL or REVEAL, only the target may respond.
+- For CONCEAL, any opponent may respond.
+- An eligible player holding APPEAL may play it or pass. An eligible player without APPEAL passes automatically.
+- The interrupt ends immediately when someone appeals, all eligible APPEAL holders have passed, or the 30-second maximum expires. The first appeal received by the server wins.
+- APPEAL cancels the pending action; both action cards are discarded. APPEAL cannot itself be appealed.
+- Fast passing may reveal whether someone holds APPEAL; the game intentionally adds no random or fixed wait to hide that information.
+- REVEAL with no concealed cards on the target's Table is rejected and does not consume its action card.
 
-### 6.2 Main Phase
-You may perform the following actions **in any order, unlimited times**:
+CONCEAL targets one of the actor's own revealed Table cards. STEAL takes a Normal/TEAL card from an opponent's Table, selected directly if revealed and blindly if concealed. REVEAL selects a concealed card on an opponent's Table blindly and makes it revealed when resolved.
 
-* **Discard a Table Card:** Move a Normal/TEAL card from your Table into your Hand. It will be discarded at turn end.
-* **Move Normal/TEAL to Table:** Move a Normal or TEAL card from your Hand onto an open Table slot. With 9 cards on the Table, choose a Table card to swap out; the replaced card goes to your Hand.
-* **Play Action Cards** from your Hand:
-  * **CONCEAL** — Target one of your own Revealed Table cards to conceal it again.
-  * **STEAL** — Take a Normal card or the TEAL card from an opponent's Table. If the target is Revealed, choose it directly. If it's Concealed, you choose blindly — you won't know what it is until the steal resolves.
-  * **REVEAL** — Force a Concealed card on an opponent's Table to become Revealed. Chosen blindly.
-* **Interrupt Window:** Playing CONCEAL, STEAL, or REVEAL opens the Interrupt Phase.
+### End
 
-### 6.3 Interrupt Phase (Triggered by CONCEAL, STEAL, or REVEAL)
-* **STEAL / REVEAL:** only the targeted opponent may play APPEAL.
-* **CONCEAL:** any opponent may play APPEAL — a CONCEAL benefits its user against everyone at the table, so anyone has standing to contest it. If more than one opponent attempts to APPEAL, the first one the game receives wins the race; that's the APPEAL card that gets used.
-* The eligible player(s) have **30 seconds** to respond:
-  * **Play APPEAL** — Sends both the original action card and the APPEAL card to the discard pile. The action is cancelled.
-  * **Do Nothing** — If no APPEAL is played within 30 seconds, the action resolves normally.
+Keep any APPEAL cards in your Hand for future interrupts and discard every other card left there. If a STEAL left your Table above nine cards, move cards to your Hand until it is back to nine; those cards are discarded in cleanup unless they are APPEAL cards. Then check whether the nine cards form three valid sets. If so, the player wins and all cards are revealed to everyone. Otherwise, the turn passes to the next player.
 
-### 6.4 End Phase
-1. **Hand cleanup:** Every card still in your Hand, including Action cards, is discarded automatically.
-2. **Table Size Limit:** If your Table has more than 9 cards (for example, after a STEAL), move enough cards to your Hand to reduce the Table to 9. They are discarded with the rest of your Hand.
-3. **Win Check:** If your Table holds 9 cards forming 3 valid sets, you win immediately.
-4. Otherwise, the turn passes to the next player, who begins their Draw Phase.
+## Spectators, disconnects, and rejoin
 
----
+There is no chat, including spectator chat. Spectators see concealed cards face-down, public hand sizes, interrupt countdowns, and interrupt outcomes.
 
-## 7. Action Cards
+A new session may request to rejoin by entering a player's name. The host approves or declines; the requester receives no game data before approval. A declined request or one unanswered for about 60 seconds becomes a spectator. Approval disconnects any old socket for that seat. Names are trimmed and unique case-insensitively.
 
-| Card | Description |
-|------|-------------|
-| **CONCEAL** | Target one of your own Revealed Table cards to hide it again. Any opponent may play APPEAL against it. |
-| **STEAL** | Take a Normal card or the TEAL card from an opponent's Table — Revealed (chosen directly) or Concealed (chosen blindly). Only the targeted opponent may APPEAL. |
-| **REVEAL** | Force a Concealed card on an opponent's Table to become Revealed. Chosen blindly. Only the targeted opponent may APPEAL. |
-| **APPEAL** | Play during the Interrupt Phase to block an opponent's CONCEAL, STEAL, or REVEAL. Both cards are discarded. |
+Player seats, names, Tables, and action cards are held through disconnect until the game ends. After 60 seconds away, mark the player away and skip their current turn; future turns for that player are skipped immediately. If the host disconnects, host ownership transfers to the next connected player. The original host must request rejoin and be approved like any other returning player.
 
----
-
-## 8. Deck Composition
-
-* **105 Normal Cards:** 3 colors × 7 numbers × 5 shapes = 105 unique combinations
-* **3 TEAL Cards:** the wild card, fixed Teal color, flexible number/shape
-* **12 Action Cards:** 3 copies each of CONCEAL, STEAL, REVEAL, APPEAL
-* **Total: 120 cards**
-
----
-
-## 9. Additional Notes
-
-* **Revealed / Concealed:** Table cards start Concealed. REVEAL exposes a card to all players; CONCEAL hides it again. Hand cards (Action cards) have no such state — they are simply always private, since only Table cards can ever be targeted.
-* **Targeting Restrictions:** STEAL, REVEAL, and CONCEAL can only affect Normal cards or the TEAL card on a Table. Action cards in a Hand can never be targeted — this follows automatically from the zone structure. This includes Table cards that are part of a completed set: nothing on the Table is protected from STEAL.
-* **Discard Pile:** Cards moved from Table to Hand, cards left in Hand at turn end, and played/appealed Action cards go here. Used to reshuffle when the draw deck empties.
-* **Hand cleanup:** Action cards must be used during the current turn or they are discarded along with any other cards left in Hand.
-* **Table arrangement:** Reordering your own cards is local presentation only. It does not call the server or change the order shown to other players.
-
-## 10. Current Implementation Notes
-
-* Active-game departures discard the departing player's cards. If only one player remains, they may continue playing alone.
+The host can kick players and spectators. After a game ends, players may rematch.

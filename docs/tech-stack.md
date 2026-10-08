@@ -1,65 +1,48 @@
 # 3EAL — Tech Stack & Architecture
 
-## 1. Core Technology Stack
+## Stack
 
-* **Frontend:** React 19.2.8 with TypeScript 6.0.2
-* **Build Tool:** Vite 8.2.0
-* **Styling:** Tailwind CSS 4.3.3
-* **Backend & Realtime State:** Firebase Authentication (anonymous sign-in) and Cloud Firestore, with authoritative writes through Cloudflare Pages Functions
-* **Hosting:** Cloudflare Pages (static Vite app and Pages Functions)
-* **Version Control:** GitHub
-* **Quality Checks:** OxLint, TypeScript/Vite build, Vitest, and GitHub Actions CI
+- **Client:** React 19, TypeScript, Vite, Tailwind CSS 4
+- **Shared game rules:** Pure TypeScript npm workspace at `game/packages/engine`
+- **Realtime/server:** Cloudflare Worker and one SQLite-backed Durable Object (`GameRoom`) per room
+- **Transport:** WebSockets with the Hibernation API, full filtered snapshots, and alarms for every server deadline
+- **Validation:** Zod protocol schemas, Vitest, fast-check, Playwright, OxLint, TypeScript, GitHub Actions
+- **Hosting:** Workers static assets and Worker API on the same origin
+- **Anti-abuse/analytics:** Cloudflare Turnstile on room creation and optional Cloudflare Web Analytics
 
----
+Firebase, Firestore, anonymous authentication, Pages Functions, and Google Cloud service accounts have been removed. There are no accounts; the room code and case-insensitively unique player name identify participants.
 
-## 2. Current Directory Structure
+## Important files
 
 ```text
 game/
-├── src/
-│   ├── components/
-│   │   ├── cards/         # NormalCard, ActionCard, CardSlot
-│   │   └── game/          # Action targeting, menus, and rules
-│   ├── logic/             # Deck creation, pattern validation, turn/action engine
-│   │   ├── deck.ts        # Card generation and shuffling
-│   │   ├── validation.ts  # Set validation and win condition checking
-│   │   └── gameEngine.ts  # Game state machine and action handlers
-│   ├── types/             # TypeScript schemas (Card, Player, RoomState)
-│   │   └── index.ts       # All type definitions
-│   ├── pages/             # Home, Lobby, and Game Board views
-│   ├── lib/               # Firebase initialization and room/game API subscriptions
-│   ├── App.tsx            # Main application entry
-│   └── index.css           # Global styles
-├── functions/             # Cloudflare Pages API
-├── firestore.rules        # Client access controls
-├── firebase.json          # Emulator configuration
-├── wrangler.toml          # Pages configuration
-└── package.json           # Dependencies and scripts
+├── packages/engine/src/     # seeded pure rules, deck, partitions, room reducer
+├── src/shared/protocol.ts   # Zod-validated client/server messages and filtered views
+├── src/hooks/useRoom.ts     # reconnecting WebSocket client and optimistic state
+├── src/pages/               # Home, Worker lobby, Worker game board
+├── worker/index.ts          # same-origin API/static-assets routing and room creation
+├── worker/gameRoom.ts       # SQLite persistence, Hibernation API, alarms, views
+├── worker/views.ts          # per-socket privacy filtering
+├── wrangler.toml            # Worker, assets, Turnstile vars, first SQLite migration
+└── playwright.config.ts     # browser-level hidden-information coverage
 ```
 
----
+## Authoritative state and privacy
 
-## 3. Available Scripts
+Each room's Durable Object stores the shuffled deck, hands, Tables, action/interrupt state, seats, and rejoin requests in one SQLite row. A validated action reduces the pure room state, persists it, advances the earliest alarm, and broadcasts full snapshots. The Worker never serializes the seed, deck order, opponents' hands, or concealed card identities into public views. Players receive only their own hand and concealed cards in a separate private field. Spectators receive the same public snapshot as opponents.
 
-* `npm run dev` - Start development server (default: http://localhost:5173)
-* `npm run build` - Build for production (TypeScript compile + Vite build)
-* `npm run preview` - Preview production build locally
-* `npm run lint` - Run OxLint for code quality checks
-* `npm test` - Run game-engine unit tests
+Card IDs are seeded-random 128-bit values, independent of card descriptions. The deck seed comes from the Worker and stays in Durable Object state. At game end the public snapshot reveals all cards.
 
----
+## Timers and lifecycle
 
-## 4. Current Architecture
+- Interrupts last at most 30 seconds and end on the first APPEAL, all APPEAL holders passing, or expiry.
+- The 60-second default turn timer pauses during an interrupt; the host sets 15–180 seconds in the lobby.
+- A disconnected seat is retained; after 60 seconds away its current/future turns are skipped.
+- Host approval is required for a new session to reclaim a player seat. Pending requesters receive no view before approval.
+- The room's single alarm is always set to the earliest interrupt, turn, away, or rejoin-request deadline. Server timers do not use `setTimeout`.
 
-* **Authoritative state:** Cloudflare Pages Functions verify Firebase ID tokens and use Firestore REST transactions for room and game mutations. Server-side game state keeps the deck, hands, and concealed card identities private.
-* **Realtime views:** Firestore publishes lobby metadata and sanitized per-player game views. Clients cannot write Firestore documents directly; private game state is not readable from the client.
-* **Local development:** Firebase Auth and Firestore emulators run with the same project ID as the client and Pages Function configuration.
-* **Room identity:** The API enforces case-insensitive unique names inside each room and allocates numbered `Player N` defaults to joining players.
-* **Card movement:** Table rearrangement is local-only presentation state. It does not call the server and does not change the order opponents see. Hand-to-Table moves and swaps are game actions and are validated by the authoritative API.
-* **Draw and cleanup:** Each turn draws automatically into Hand. Normal/TEAL cards can be placed or swapped onto the Table during Main; all cards left in Hand at turn end are discarded automatically.
-* **Latency feedback:** The UI reports when a server-bound request is submitted, accepted, or rejected. Firestore subscriptions deliver the resulting state separately from the command response.
-* **Winner persistence:** Winning sets are serialized as objects containing card arrays, avoiding Firestore's prohibition on nested arrays.
-* **Active-game membership:** Leaving or host removal discards that player's cards, updates turn order and host identity, and refreshes sanitized views. A lone remaining member may continue.
-* **Bundle loading:** Home is kept independent of Firebase; Lobby and Game Board are lazy-loaded to defer game code until needed.
+## Free-tier operation
 
-Production Firebase rules and Cloudflare Pages runtime bindings still require deployment verification. The CI workflow runs tests, lint, and build but does not deploy.
+The first Wrangler migration declares `new_sqlite_classes = ["GameRoom"]`, as required to use SQLite-backed Durable Objects on Workers Free. Cloudflare's current pricing documentation lists free daily quotas, reset at 00:00 UTC; exceeded operations fail until reset. Incoming WebSocket messages use 20:1 request billing, outgoing messages are free, and static asset requests are free. See the official [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/), [Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/), and [Pages migration guide](https://developers.cloudflare.com/workers/static-assets/migration-guides/migrate-from-pages/).
+
+Turnstile and Web Analytics are Cloudflare services; no paid vendor or external database is required.

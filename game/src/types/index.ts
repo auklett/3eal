@@ -1,4 +1,6 @@
-export type CardColor = 'C0C0FF' | '008080' | 'C06060';
+import { COLOR_HEX, type Color } from '@3eal/engine';
+
+export type CardColor = (typeof COLOR_HEX)[Color];
 export type CardShape = 'circle' | 'triangle' | 'square' | 'pentagon' | 'hexagon';
 export type ActionType = 'CONCEAL' | 'STEAL' | 'REVEAL' | 'APPEAL';
 export type CardCategory = 'NORMAL' | 'WILD' | 'ACTION';
