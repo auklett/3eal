@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import TurnstileWidget from '../components/TurnstileWidget';
 
 interface HomePageProps {
   onJoinRoom: (roomCode: string) => void;
-  onCreateRoom: () => Promise<string>;
+  onCreateRoom: (name: string, turnstileToken: string) => Promise<{ roomCode: string; sessionId?: string }>;
   onRules: () => void;
+  useTurnstile?: boolean;
 }
 
 const tiles = [
@@ -12,10 +14,31 @@ const tiles = [
   { shape: 'square', color: '#C0C0FF' }
 ] as const;
 
-export default function HomePage({ onJoinRoom, onCreateRoom, onRules }: HomePageProps) {
+export default function HomePage({ onJoinRoom, onCreateRoom, onRules, useTurnstile = false }: HomePageProps) {
   const [roomCode, setRoomCode] = useState('');
+  const [playerName, setPlayerName] = useState(() => sessionStorage.getItem('3eal-player-name') ?? 'Player 1');
+  const [turnstileToken, setTurnstileToken] = useState('');
+  const [turnstileResetKey, setTurnstileResetKey] = useState(0);
+  const [turnstileSiteKey, setTurnstileSiteKey] = useState('');
+  const [turnstileError, setTurnstileError] = useState('');
   const [error, setError] = useState('');
   const [isCreating, setIsCreating] = useState(false);
+
+  useEffect(() => {
+    if (!useTurnstile) return;
+    void fetch('/api/config')
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Room creation settings could not be loaded.');
+        return response.json() as Promise<{ turnstileSiteKey?: string }>;
+      })
+      .then(({ turnstileSiteKey: siteKey }) => {
+        if (siteKey) setTurnstileSiteKey(siteKey);
+        else setTurnstileError('Room creation verification is not configured.');
+      })
+      .catch((configError: unknown) => {
+        setTurnstileError(configError instanceof Error ? configError.message : 'Room creation verification is unavailable.');
+      });
+  }, [useTurnstile]);
 
   const handleJoin = () => {
     const normalizedCode = roomCode.trim().toUpperCase();
@@ -24,6 +47,12 @@ export default function HomePage({ onJoinRoom, onCreateRoom, onRules }: HomePage
       return;
     }
     setError('');
+    const normalizedName = playerName.trim();
+    if (!normalizedName || normalizedName.length > 24) {
+      setError('Enter a player name containing 1–24 characters.');
+      return;
+    }
+    sessionStorage.setItem('3eal-player-name', normalizedName);
     onJoinRoom(normalizedCode);
   };
 
@@ -31,11 +60,19 @@ export default function HomePage({ onJoinRoom, onCreateRoom, onRules }: HomePage
     setIsCreating(true);
     setError('');
     try {
-      onJoinRoom(await onCreateRoom());
+      const normalizedName = playerName.trim();
+      if (!normalizedName || normalizedName.length > 24) throw new Error('Enter a player name containing 1–24 characters.');
+      if (useTurnstile && !turnstileToken) throw new Error('Complete the verification before creating a room.');
+      const created = await onCreateRoom(normalizedName, turnstileToken);
+      sessionStorage.setItem('3eal-player-name', normalizedName);
+      if (created.sessionId) sessionStorage.setItem(`3eal-session:${created.roomCode}`, created.sessionId);
+      onJoinRoom(created.roomCode);
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : 'Unable to create a room.');
     } finally {
       setIsCreating(false);
+      setTurnstileToken('');
+      setTurnstileResetKey((key) => key + 1);
     }
   };
 
@@ -79,6 +116,17 @@ export default function HomePage({ onJoinRoom, onCreateRoom, onRules }: HomePage
 
           <div className="space-y-3.5" aria-label="Room actions">
             <label className="block">
+              <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-white/60">Player Name</span>
+              <input
+                value={playerName}
+                onChange={(event) => setPlayerName(event.target.value.slice(0, 24))}
+                autoComplete="nickname"
+                aria-label="Player Name"
+                className="h-12 w-full rounded-xl border border-white/15 bg-black/40 px-4 text-center text-white outline-none transition hover:border-white/30 focus:border-teal-300/70 focus:ring-4 focus:ring-teal-300/10"
+                maxLength={24}
+              />
+            </label>
+            <label className="block">
               <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-white/60">Room Code</span>
               <input
                 value={roomCode}
@@ -101,10 +149,18 @@ export default function HomePage({ onJoinRoom, onCreateRoom, onRules }: HomePage
               Join Room
               <span aria-hidden="true" className="transition-transform duration-200 group-hover:translate-x-1">→</span>
             </button>
+            {useTurnstile && (
+              <div className="space-y-1">
+                {turnstileSiteKey && (
+                  <TurnstileWidget siteKey={turnstileSiteKey} resetKey={turnstileResetKey} onToken={setTurnstileToken} />
+                )}
+                {turnstileError && <p className="text-center text-xs text-amber-200" role="status">{turnstileError}</p>}
+              </div>
+            )}
             <button
               type="button"
               onClick={() => void handleCreateRoom()}
-              disabled={isCreating}
+              disabled={isCreating || (useTurnstile && (!turnstileToken || !turnstileSiteKey))}
               className="min-h-14 w-full rounded-xl border border-white/20 bg-white/[0.04] px-5 py-3 font-semibold text-white transition duration-200 hover:-translate-y-0.5 hover:border-teal-300/50 hover:bg-teal-300/[0.08] active:translate-y-0 disabled:cursor-wait disabled:opacity-60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-300"
             >
               {isCreating ? 'Creating Room…' : 'Create Room'}

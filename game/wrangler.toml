@@ -1,17 +1,23 @@
 name = "3eal"
-pages_build_output_dir = "./dist"
-compatibility_date = "2026-09-27"
+main = "worker/index.ts"
+compatibility_date = "2026-10-09"
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+run_worker_first = true
+
+[[durable_objects.bindings]]
+name = "GAME_ROOM"
+class_name = "GameRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["GameRoom"]
 
 [vars]
-FIREBASE_API_KEY = "AIzaSyDrHLWBGELzKPcf2e6qnFW6HP5IHiQZj2E"
-FIREBASE_AUTH_DOMAIN = "eal-5d762.firebaseapp.com"
-FIREBASE_PROJECT_ID = "eal-5d762"
-FIREBASE_STORAGE_BUCKET = "eal-5d762.firebasestorage.app"
-FIREBASE_MESSAGING_SENDER_ID = "506635171251"
-FIREBASE_APP_ID = "1:506635171251:web:dcfa9d02186b747959c7c6"
-VITE_FIREBASE_API_KEY = "AIzaSyAdACrMyj1zjScKmQyeaP-7lr0zYnSafN0"
-VITE_FIREBASE_AUTH_DOMAIN = "eal-5d762.firebaseapp.com"
-VITE_FIREBASE_PROJECT_ID = "eal-5d762"
-VITE_FIREBASE_STORAGE_BUCKET = "eal-5d762.firebasestorage.app"
-VITE_FIREBASE_MESSAGING_SENDER_ID = "506635171251"
-VITE_FIREBASE_APP_ID = "1:506635171251:web:dcfa9d02186b747959c7c6"
+TURNSTILE_SITE_KEY = ""
+WEB_ANALYTICS_TOKEN = ""
+
+[observability]
+enabled = true

@@ -12,7 +12,10 @@ dist
 dist-ssr
 *.local
 .wrangler
+worker-configuration.d.ts
 _worker.bundle
+playwright-report
+test-results
 .dev.vars
 .dev.vars.*
 !.dev.vars.example

@@ -1,81 +1,84 @@
 # 3EAL — Official Game Rules
 
-## 1. Objective
+## Objective
 
-Be the first player to build **3 complete sets of 3 cards** (9 cards total) on your Table.
+Be the first player to build three valid sets of three cards (nine cards total) on your Table.
 
-## 2. Cards
+## Cards
 
-| Category | Count | Where it goes | Description |
-|---|---:|---|---|
-| **Normal** | 175 | Hand, then Table | 5 colors × 7 numbers × 5 shapes |
-| **TEAL wild** | 3 | Hand, then Table | Always Teal; can match any number or shape |
-| **Action** | 40 | Hand | 10 copies each of CONCEAL, STEAL, REVEAL, and APPEAL |
+The 218-card deck contains:
 
-**Total: 218 cards.**
+| Category | Count | Notes |
+|---|---:|---|
+| Normal | 175 | 5 colors × 7 numbers × 5 shapes |
+| TEAL wild | 3 | Always Teal for color sets; may adopt any number or shape |
+| Action | 40 | 10 each of CONCEAL, STEAL, REVEAL, and APPEAL |
 
-Normal colors are Lavender (`C0C0FF`), Teal (`008080`), Coral (`C06060`), Purple (`884488`), and Indigo (`404088`). Shapes are Circle, Triangle, Square, Pentagon, and Hexagon. Optional color-blind mode adds distinct patterns and glyphs.
+Normal-card colors are Periwinkle (`C0C0FF`), Teal (`008080`), Rose (`C06060`), Grape Soda (`884488`), and French Blue (`404088`). Shapes are Circle, Triangle, Square, Pentagon, and Hexagon. Normal numbers range from 1 to 7.
 
-### Action cards
+TEAL is a distinct wild card, not an ordinary Teal-colored Normal card. For a Same Color set it is always Teal. For Same Number or Same Shape sets it can adopt whatever value completes the set.
 
-| Card | Effect |
-|---|---|
-| **CONCEAL** | Hide one of your own revealed Table cards. Any opponent may APPEAL. |
-| **STEAL** | Take a Normal or TEAL card from an opponent's Table. Revealed cards are selected directly; concealed cards are selected blindly. Only the target may APPEAL. |
-| **REVEAL** | Reveal a concealed card on an opponent's Table, selected blindly. Only the target may APPEAL. |
-| **APPEAL** | During an interrupt, cancel CONCEAL, STEAL, or REVEAL. Both action cards are shuffled into the draw deck. |
+## Zones and visibility
 
-## 3. Zones
+- **Table:** Holds Normal and TEAL cards. Cards are either revealed (visible to everyone) or concealed (identity visible only to their owner). A STEAL may temporarily take a table above nine cards until end-of-turn cleanup.
+- **Hand:** Private and unbounded. Unplayed APPEAL cards remain in Hand across turns until played; all other cards left at turn end are discarded. No card in a Hand can be targeted.
+- Public views show every player's hand size, never hand contents. Players see their own hand and concealed cards. Spectators receive exactly the same public information as an opponent, with no private-card privileges.
+- Card IDs are random and must not encode card identity. Stealing preserves the card's reveal/conceal state; the thief can see it in their own private view.
 
-- **Table:** Public area for Normal and TEAL cards. It normally holds up to 9 cards. A STEAL may temporarily take it above 9 until the active player removes extras. Table cards start revealed; the eye icon at the top of a card indicates that everyone can see it. CONCEAL can hide a card again.
-- **Hand:** Private area with no size limit. Drawn cards go here first. Action cards remain in your Hand across turns until played. Normal and TEAL cards left in your Hand at the end of your turn are discarded.
-- **Draw deck:** All discarded cards are shuffled directly into the draw deck. There is no discard pile.
+## Valid sets and winning
 
-## 4. Setup
+A valid set has exactly three Normal/TEAL cards that share a color, number, or shape. A TEAL card's color is fixed as Teal, but it can adopt any number or shape. Action cards cannot be part of a set.
 
-1. Each player is dealt **3 revealed cards to their Table** and starts with an empty Hand.
-2. The remaining cards form the draw deck. The host selects a 45-, 75-, or 120-second turn limit before starting.
-3. The starting player is selected at random.
+The win check searches for any valid partition of all nine Table cards into three valid sets. A nine-card table has 280 possible partitions; the game must not require a particular grouping or arrangement.
 
-## 5. Valid sets
+## Setup
 
-A set is 3 cards on your Table that share **one** of the following:
+The room supports at least two players and has no configured maximum player count. Starting still requires enough Normal/TEAL cards to deal three Table cards to every player. New users join as players by default while the game is in the lobby; they can switch to spectator there. If the game has started, they join as spectators. Player joining is not capped by a configured limit.
 
-- **Same color:** all three colors match.
-- **Same number:** all three numbers match (1–7).
-- **Same shape:** all three shapes match.
+Deal three cards to each player's Table, all concealed, and no cards to their Hand. The remaining cards form the draw deck. Choose the first active player randomly.
 
-For example, three Teal cards with different numbers and shapes make a same-color set. Three 5s with different colors and shapes make a same-number set. Three pentagons with different colors and numbers make a same-shape set. Consecutive numbers do not count as a pattern.
+## Turn flow
 
-TEAL is always Teal for same-color sets. For same-number or same-shape sets, it can adopt any number or shape needed to complete the set.
+Each turn has a default 60-second timer. The room owner may change it in the lobby before the game starts, from 15 through 180 seconds.
 
-## 6. Turn flow
+### Draw
 
-### Draw phase
+At turn start, draw one card into your Hand. If the deck is empty, shuffle the discard pile into a new deck. If both are empty, no card is drawn.
 
-At the start of your turn, draw 1 card from the deck into your Hand.
+### Main
 
-### Main phase
+You may perform these actions in any order and as often as desired:
 
-You may perform these actions in any order:
+- Move a Normal or TEAL card from your Hand to an open Table position.
+- If your Table has nine cards, swap a Hand Normal/TEAL card for a Table card; the replaced card goes to your Hand.
+- Move a Table card to your Hand. It is discarded at turn end.
+- Play CONCEAL, STEAL, or REVEAL from your Hand. This opens an interrupt unless it is immediately resolved because no eligible player holds APPEAL.
+- End your turn.
 
-- Move a Normal or TEAL card from your Hand to an open Table slot. If you already have 9 cards, swap it with a selected Table card; the replaced card returns to your Hand.
-- Move a Table card to your Hand to discard it at turn end.
-- Play CONCEAL, STEAL, or REVEAL from your Hand. Each action opens an interrupt window.
+### Interrupts
 
-### Interrupt phase
+Playing CONCEAL, STEAL, or REVEAL opens an interrupt with a maximum duration of 30 seconds. The turn timer pauses and resumes with its remaining time once the interrupt ends.
 
-Every interrupt window lasts **30 seconds**. Only the target may appeal STEAL or REVEAL; any opponent may appeal CONCEAL. An APPEAL cancels the action and returns both cards to the draw deck. If no APPEAL is played before the window ends, the action resolves.
+- For STEAL or REVEAL, only the target may respond.
+- For CONCEAL, any opponent may respond.
+- An eligible player holding APPEAL may play it or pass. An eligible player without APPEAL passes automatically.
+- The interrupt ends immediately when someone appeals, all eligible APPEAL holders have passed, or the 30-second maximum expires. The first appeal received by the server wins.
+- APPEAL cancels the pending action; both action cards are discarded. APPEAL cannot itself be appealed.
+- Fast passing may reveal whether someone holds APPEAL; the game intentionally adds no random or fixed wait to hide that information.
+- REVEAL with no concealed cards on the target's Table is rejected and does not consume its action card.
 
-### End phase
+CONCEAL targets one of the actor's own revealed Table cards. STEAL takes a Normal/TEAL card from an opponent's Table, selected directly if revealed and blindly if concealed. REVEAL selects a concealed card on an opponent's Table blindly and makes it revealed when resolved.
 
-1. Normal and TEAL cards remaining in your Hand are shuffled into the draw deck. **Action cards stay in your Hand.**
-2. If a STEAL left you with more than 9 Table cards, move extras to your Hand; they are shuffled into the draw deck with the rest.
-3. If your Table has 9 cards that form 3 valid sets, you win.
-4. Otherwise, the turn passes to the next player.
+### End
 
-## 7. Disconnects and rejoining
+Keep any APPEAL cards in your Hand for future interrupts and discard every other card left there. If a STEAL left your Table above nine cards, move cards to your Hand until it is back to nine; those cards are discarded in cleanup unless they are APPEAL cards. Then check whether the nine cards form three valid sets. If so, the player wins and all cards are revealed to everyone. Otherwise, the turn passes to the next player.
 
-The game sends a connection heartbeat every 15 seconds. An away active player's turn is skipped. Three consecutive missed turns forfeit that seat; the host is handed to a connected player when needed. A returning player can request to reclaim an existing seat by their unique in-game name, subject to host approval. Requests time out to spectator status when capacity permits. Rooms allow up to 8 spectators, who see public Tables but never private Hands.
+## Spectators, disconnects, and rejoin
 
-The host chooses a 45-, 75-, or 120-second turn limit before starting. Players heartbeat every 15 seconds; an expired turn is skipped and counts toward the three-miss forfeit rule. A forfeit frees the player seat and hands the host role to a connected player when needed.
+There is no chat, including spectator chat. Spectators see concealed cards face-down, public hand sizes, interrupt countdowns, and interrupt outcomes.
+
+A new session may request to rejoin by entering a player's name. The host approves or declines; the requester receives no game data before approval. A declined request or one unanswered for about 60 seconds becomes a spectator. Approval disconnects any old socket for that seat. Names are trimmed and unique case-insensitively.
+
+Player seats, names, Tables, and action cards are held through disconnect until the game ends. After 60 seconds away, mark the player away and skip their current turn; future turns for that player are skipped immediately. If the host disconnects, host ownership transfers to the next connected player. The original host must request rejoin and be approved like any other returning player.
+
+The host can kick players and spectators. After a game ends, players may rematch.

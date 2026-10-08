@@ -4,37 +4,37 @@
 
 ### 1.1 Card Schema
 ```typescript
-type CardCategory = 'NORMAL' | 'WILD' | 'ACTION';
-type CardColor = 'C0C0FF' | '008080' | 'C06060' | '884488' | '404088';
+type CardCategory = 'normal' | 'teal' | 'action';
+type CardColor = 'periwinkle' | 'teal' | 'rose' | 'grape' | 'frenchBlue';
 type CardShape = 'circle' | 'triangle' | 'square' | 'pentagon' | 'hexagon';
 type ActionType = 'CONCEAL' | 'STEAL' | 'REVEAL' | 'APPEAL';
 
 interface Card {
-  id: string; // Unique instance ID (e.g., "card_042")
-  category: CardCategory;
+  id: string; // Random opaque instance ID
+  kind: CardCategory;
   isRevealed: boolean; // Only meaningful for NORMAL/WILD cards while on a Table
 
   // Normal & Wild Card Attributes (undefined for pure ACTION cards)
-  color?: CardColor;   // WILD is always '008080'
-  number?: number;     // 1-7; unset for WILD until resolved at set-check time
-  shape?: CardShape;   // unset for WILD until resolved at set-check time
+  color?: CardColor;   // TEAL is always Teal
+  number?: number;     // 1-7; TEAL adopts any number for a set check
+  shape?: CardShape;   // TEAL adopts any shape for a set check
 
   // Action Card Attributes (undefined for NORMAL/WILD cards)
-  actionType?: ActionType;
-  title?: string;
-  description?: string;
+  action?: ActionType;
 }
 ```
 
 ### 1.2 Player Schema
 ```typescript
 interface Player {
-  id: string;
+  id: string; // Public participant ID; never used as a session credential
+  sessionIds: string[]; // Private reconnect credentials; never included in views
   name: string; // Unique within a room, compared after trimming and case folding
   isHost: boolean;
   table: Card[]; // NORMAL + WILD cards only, max 9
-  hand: Card[];  // Private zone; unused Action cards persist across turns
-  sets: Array<{ cards: Card[] }>; // Firestore-safe representation of the winning partition
+  hand: Card[];  // Private zone for drawn cards and Table cards pending discard
+  table: Card[]; // Private authoritative cards; clients receive filtered views
+  hand: Card[];  // Private authoritative hand
 }
 ```
 
@@ -46,20 +46,38 @@ interface Player {
 - An explicit rename to a name already used in that room is rejected with a clear message; the current name remains unchanged.
 - Name uniqueness is enforced by the server inside the room transaction so concurrent joins cannot create duplicates.
 
-### 1.4 Lobby & Game State Documents
+### 1.4 Lobby & Game State Schema
+```typescript
+interface RoomState {
+  roomCode: string; // 4-6 alphanumeric random string
+  status: 'LOBBY' | 'IN_GAME' | 'FINISHED';
+  players: Record<string, Player>; // Keyed by Player ID
+  hostId: string;
 
-The server splits authoritative state into Firestore documents so clients can read only the data needed for their role:
-
-| Path | Contents | Client access |
-|---|---|---|
-| `rooms/{code}` | Lobby roster/roles, host, room status, configured turn limit | Members only |
-| `rooms/{code}/public/state` | Active player, phase/timers, deck count, online status, public Tables (concealed card identities replaced with opaque IDs), pending action, winner | All room members, including spectators |
-| `rooms/{code}/playerPrivate/seat-{n}` | `ownerId`, `seatIndex`, private version, and that player's Table, Hand, and winning sets | Only the owner, while assigned to that seat |
-| `rooms/{code}/private/meta` | Turn order, seeded PRNG state, target references, presence timestamps, private versions, pending action details | Server only |
-| `rooms/{code}/private/deck` | Draw deck | Server only |
-| `rooms/{code}/rejoinRequests/{uid}` | Name-based seat request and expiry | Requester and host only |
-
-Game mutations read a fixed set of room/state documents in one `batchGet` and commit with update-time preconditions. The server writes only changed deck and player-seat documents; it always publishes the updated public projection and private metadata atomically. `GameState` includes its seeded random state, configured `turnDurationMs`, `turnEndsAt`, and a `resolveAt` on pending actions. The target card ID and any APPEAL eligibility stay server-private.
+  // Active Game State
+  game?: {
+    deck: Card[];
+    discardPile: Card[];
+    activePlayerId: string;
+    turnPhase: 'DRAW' | 'MAIN' | 'INTERRUPT';
+    pendingAction?: {
+      sourcePlayerId: string;
+      actionType: 'CONCEAL' | 'STEAL' | 'REVEAL';
+      actionCardId: string;
+      targetPlayerId: string;  // = sourcePlayerId for CONCEAL (self-target)
+      targetCardId: string;    // known to the server even when blind
+      wasBlindTarget: boolean; // true if the targeted card was Concealed at selection time
+      appealWindowEndsAt: number; // timestamp, creation + 30s
+      resolvedByPlayerId?: string; // set once an APPEAL wins the race
+      // No `eligibleAppealPlayerIds` here by design — see §3.4. Who's
+      // eligible by targeting rule is public; who ALSO holds an APPEAL
+      // card is private and must never be broadcast as a list, or it
+      // leaks hand contents to the rest of the room.
+    };
+    winnerId: string | null;
+  };
+}
+```
 
 ## 2. Deck Generation & Combinations
 
@@ -69,24 +87,24 @@ Game mutations read a fixed set of room/state documents in one `batchGet` and co
 - **Total Deck Size:** **218 Cards**
 
 ### Normal Card Colors:
-- `C0C0FF` — Lavender
+- `C0C0FF` — Periwinkle
 - `008080` — Teal
-- `C06060` — Coral
-- `884488` — Purple
-- `404088` — Indigo
+- `C06060` — Rose
+- `884488` — Grape Soda
+- `404088` — French Blue
 
 ### Normal Card Numbers: 1–7
 
 ### Normal Card Shapes: Circle, Triangle, Square, Pentagon, Hexagon
 
-### Action Card Types (10 copies each):
+### Action Card Types (3 copies each):
 1. **CONCEAL** — Hide one of your own Revealed Table cards
 2. **STEAL** — Take a Normal or WILD card from an opponent's Table
 3. **REVEAL** — Force a Concealed card on an opponent's Table to become Revealed
 4. **APPEAL** — Block an opponent's CONCEAL, STEAL, or REVEAL
 
 ### Wild Card:
-- **TEAL** — fixed Teal color (`008080`), flexible shape/number. Drawn into Hand first, then may be moved to the Table during Main; any TEAL left in Hand at turn end is recycled into the draw deck.
+- **TEAL** — fixed Teal color (`008080`), flexible shape/number. Drawn into Hand first, then may be moved to the Table during Main.
 
 ## 3. Action Handlers & Rules Engine
 
@@ -113,9 +131,9 @@ Game mutations read a fixed set of room/state documents in one `batchGet` and co
 
 ### 3.4 APPEAL
 - **Trigger:** During the INTERRUPT phase, by a player eligible under the action's targeting rule and holding an APPEAL card. Eligibility is checked against private server state and is not broadcast as a player list.
-- **Effect:** Cancels `pendingAction`; both the original action card and the APPEAL card are shuffled into the draw deck.
-- **Race Resolution:** If multiple eligible players attempt APPEAL (only possible for CONCEAL, which can have several eligible players), the first conditional Firestore commit wins; subsequent attempts see that the pending action is gone and are rejected. The eligibility list and APPEAL cards are never broadcast.
-- **Window:** The server always sets `resolveAt` 30 seconds ahead. If the deadline elapses with no successful APPEAL, `pendingAction` resolves normally and `turnPhase` returns to `MAIN`.
+- **Effect:** Cancels `pendingAction`; both the original action card and the APPEAL card move to the discard pile.
+- **Race Resolution:** If multiple eligible players attempt APPEAL (only possible for CONCEAL, which can have several eligible players), resolve via an atomic transaction — the first write wins and sets `pendingAction.resolvedByPlayerId`; subsequent attempts are rejected server-side.
+- **Window:** At most 30 seconds from action creation. The window closes as soon as an APPEAL wins or all eligible players pass; players without APPEAL pass automatically. The turn timer is paused until the interrupt resolves.
 
 ### 3.5 TEAL (Wild Card — not an action)
 - Lives on the Table alongside Normal cards; dealt and drawn the same way.
@@ -125,21 +143,14 @@ Game mutations read a fixed set of room/state documents in one `batchGet` and co
 
 ## 4. Game Flow & Turn Phases
 
-### Initial Deal
-
-- Deal 3 Normal/WILD cards to each player's Table and mark them revealed so every player can see them. Their eye indicator is centered at the top of the card.
-- The deck contains 218 cards before dealing; cards left after the deal form the draw deck. No discard pile is maintained.
-
 ### Phase Sequence:
-1. **DRAW** — At the start of each turn, the active player automatically draws 1 card from the deck. Every card initially goes to Hand.
+1. **DRAW** — At the start of each turn, the active player automatically draws 1 card from the deck (reshuffling the discard pile if empty). Every card initially goes to Hand.
 2. **MAIN** — Player may, in any order, any number of times:
    - Move Normal/WILD cards from Hand to an open Table slot; at 9 cards this swaps with a selected Table card and returns the replaced card to Hand.
    - Discard any number of Normal/WILD cards from their Table.
    - Play CONCEAL, STEAL, or REVEAL from their Hand — each triggers INTERRUPT.
-3. **INTERRUPT** — Every interrupt lasts 30 seconds. Eligible players holding APPEAL may play it during this window; if no APPEAL is played, the action resolves and phase returns to MAIN.
-4. **End Turn** — Normal and WILD cards left in Hand are shuffled into the draw deck; Action cards stay in Hand. If a STEAL left more than 9 cards on the Table, move cards into Hand to recycle them. Check for a win, then pass the turn.
-
-Any card discarded or consumed by an action is shuffled directly into the draw deck. Hosts choose a 45-, 75-, or 120-second turn limit. The remaining turn time pauses during an interrupt and resumes when the action resolves. After three consecutive missed turns, the player's seat is forfeited; disconnected turns are skipped and the host is handed to a connected player when necessary. A player can request their former seat by unique name; the host approves or declines to spectator status. Unanswered requests time out to spectator status when capacity allows.
+3. **INTERRUPT** — Eligible player(s) have 30 seconds to play APPEAL; if none do, the action resolves and phase returns to MAIN.
+4. **End Turn** — Non-APPEAL cards left in Hand are discarded; unplayed APPEAL cards persist between turns. If a STEAL left more than 9 cards on the Table, move cards into Hand to discard them. Check for a win, then pass the turn. The default turn timer is 60 seconds and the host may set it to 15–180 seconds in the lobby.
 
 ## 5. Win Condition Validation (Pattern Engine)
 
@@ -167,7 +178,7 @@ A set of 3 Table cards is valid if it meets **at least one** of these patterns:
 - **Resolved (previously an open question):** earlier drafts worried about a tie-break for "the" completed set when multiple valid groupings exist. That question only mattered for *protecting* set cards from STEAL — and since STEAL can already target any Table card regardless of set membership (rules.md §9), there's nothing left to protect, so no tie-break is needed for correctness.
   - `checkWinCondition()` only needs to confirm *some* valid partition of the 9 Table cards into 3 sets exists — an existence check, not an identification of specific groupings.
   - Mid-game progress display (e.g. "2/3 sets" on the Players page) only needs a count — `completeSetCount()` finds the maximum number of disjoint valid sets in the current Table via a greedy/max-matching search. Which exact cards land in which set doesn't need to be pinned down until the win moment.
-  - `findBestPartition()` identifies a winning partition. It is stored as an array of `{ cards: Card[] }` objects because Firestore does not support nested arrays.
+  - The pure shared engine searches all 280 ways to partition nine cards into three sets and accepts any valid partition; it does not store a special winning partition.
 
 ## 6. Implementation Files
 
@@ -175,11 +186,13 @@ Table-card arrangement is presentation order only: a player may move or swap the
 
 Client commands should provide immediate pending feedback while waiting on the authoritative server response, then show a confirmed result or a recoverable error. A pending indicator acknowledges that a request was sent; it must not claim that the state has already changed.
 
-Active-game leave and host-kick operations transactionally recycle the departing player's cards and update the turn order. Clients heartbeat every 15 seconds. Public state contains only revealed/opaque Tables, player presence, deck count, turn data, and pending action metadata. Each player-private document contains only that owner's Hand/Table/set data; the deck, random seed, and target references remain in denied-to-client private documents. Spectators read only public state. Firestore writes use batched reads and update-time preconditions so all public/private projections update atomically.
+The Cloudflare Worker routes each room to its SQLite-backed `GameRoom` Durable Object. It persists authoritative state in one row and broadcasts a full, role-filtered snapshot. Public participant IDs and private session IDs are separate; views never contain session IDs, hands, deck order, or concealed card identities belonging to another player. Spectators receive the same public data as opponents.
 
 | File | Purpose |
 |------|---------|
-| `src/logic/deck.ts` | Seeded 218-card deck generation (175 Normal + 3 WILD + 40 Action) |
-| `src/logic/validation.ts` | `validateSet()`, `findBestPartition()`, `checkWinCondition()`, pattern matchers |
-| `src/logic/gameEngine.ts` | State machine: `initializeGame`, `drawCard`, `moveCardToTable`, `playCard`, `resolveAction`, `playAppeal` (atomic), `endTurn` |
-| `src/types/index.ts` | All TypeScript type definitions |
+| `game/packages/engine/src/deck.ts` | Seeded deck generation and shuffling |
+| `game/packages/engine/src/sets.ts` | Set validation, maximum complete-set count, and 9-card partition search |
+| `game/packages/engine/src/room.ts` | Pure room lifecycle, turn, timer, away, and rejoin reducers |
+| `game/packages/engine/src/interrupts.ts` | Appeal eligibility, automatic pass, and interrupt resolution |
+| `game/worker/gameRoom.ts` | Durable Object persistence, WebSocket views, and alarms |
+| `game/worker/views.ts` | Player/spectator filtering of authoritative state |
