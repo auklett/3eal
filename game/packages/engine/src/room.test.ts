@@ -56,20 +56,24 @@ describe('room rules', () => {
     expect(reduceRoom(guest.state, 'host', { t: 'setTurnTimer', seconds: 15 }, 0).state.turnDurationSeconds).toBe(15);
   });
 
-  it('keeps unplayed APPEAL cards between turns and discards other Hand cards', () => {
+  it('keeps unplayed Action cards between turns and discards other Hand cards', () => {
     const room = startTwoPlayerRoom();
     const active = room.players.find((player) => player.id === room.activePlayerId);
     if (!active) throw new Error('Expected an active player');
     active.hand = [];
     active.hand.push(
       { id: 'saved-appeal', kind: 'action', action: 'APPEAL' },
-      { id: 'unused-steal', kind: 'action', action: 'STEAL' }
+      { id: 'unused-steal', kind: 'action', action: 'STEAL' },
+      { id: 'normal-card', kind: 'normal', color: 'periwinkle', number: 1, shape: 'circle', isRevealed: true }
     );
     const result = reduceRoom(room, active.id, { t: 'endTurn' }, 2000);
     if ('error' in result) throw new Error(result.error);
     expect(result.state.players.find((player) => player.id === active.id)?.hand)
-      .toEqual([{ id: 'saved-appeal', kind: 'action', action: 'APPEAL' }]);
-    expect(result.state.discardPile).toContainEqual({ id: 'unused-steal', kind: 'action', action: 'STEAL' });
+      .toEqual([
+        { id: 'saved-appeal', kind: 'action', action: 'APPEAL' },
+        { id: 'unused-steal', kind: 'action', action: 'STEAL' }
+      ]);
+    expect(result.state.discardPile).toContainEqual({ id: 'normal-card', kind: 'normal', color: 'periwinkle', number: 1, shape: 'circle', isRevealed: true });
   });
 
   it('pauses the turn clock during an interrupt and resumes it after every appeal-holder passes', () => {

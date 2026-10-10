@@ -6,6 +6,7 @@ compatibility_date = "2026-10-03"
 directory = "./dist"
 binding = "ASSETS"
 run_worker_first = true
+not_found_handling = "single-page-application"
 
 [[durable_objects.bindings]]
 name = "GAME_ROOM"

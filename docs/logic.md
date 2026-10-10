@@ -150,7 +150,7 @@ interface RoomState {
    - Discard any number of Normal/WILD cards from their Table.
    - Play CONCEAL, STEAL, or REVEAL from their Hand — each triggers INTERRUPT.
 3. **INTERRUPT** — Eligible player(s) have 30 seconds to play APPEAL; if none do, the action resolves and phase returns to MAIN.
-4. **End Turn** — Non-APPEAL cards left in Hand are discarded; unplayed APPEAL cards persist between turns. If a STEAL left more than 9 cards on the Table, move cards into Hand to discard them. Check for a win, then pass the turn. The default turn timer is 60 seconds and the host may set it to 15–180 seconds in the lobby.
+4. **End Turn** — All unused Action cards remain in Hand; all other cards left in Hand are discarded. If a STEAL left more than 9 cards on the Table, move cards into Hand to discard them (except Action cards). Check for a win, then pass the turn. The default turn timer is 60 seconds and the host may set it to 15–180 seconds in the lobby.
 
 ## 5. Win Condition Validation (Pattern Engine)
 

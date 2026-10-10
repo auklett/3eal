@@ -9,7 +9,7 @@
 - **Sets:** Three cards sharing a color, number, or shape. TEAL is always Teal for color sets and can adopt any number or shape otherwise.
 - **Interrupts:** CONCEAL, STEAL, and REVEAL allow eligible opponents to APPEAL during a maximum 30-second window.
 - **Turns:** 60 seconds by default; the host can choose 15–180 seconds in the lobby. The timer pauses during interrupts.
-- **APPEAL:** Unplayed APPEAL cards persist in Hand between turns until played; other unused Hand cards are discarded at turn end.
+- **Action Cards:** All unused Action cards persist in Hand between turns until played; other unused Hand cards are discarded at turn end.
 
 Read the full [rules](docs/rules.md).
 

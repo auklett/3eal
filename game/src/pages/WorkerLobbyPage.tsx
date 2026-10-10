@@ -17,6 +17,7 @@ function viewData(view: View | null) {
 export default function WorkerLobbyPage({ roomCode, onStartGame, onLeave }: WorkerLobbyPageProps) {
   const name = sessionStorage.getItem('3eal-player-name') ?? 'Player 1';
   const { view, status, error, clearError, send, rejoinRequests } = useRoom(roomCode, { name });
+  const [validationError, setValidationError] = useState('');
   const [turnSeconds, setTurnSeconds] = useState(60);
   const data = viewData(view);
   const currentId = view?.role === 'player' ? view.data.you.id : sessionStorage.getItem(`3eal-session:${roomCode}`);
@@ -26,6 +27,18 @@ export default function WorkerLobbyPage({ roomCode, onStartGame, onLeave }: Work
   useEffect(() => {
     if (view && view.data.phase !== 'lobby') onStartGame();
   }, [view, onStartGame]);
+
+  // Validate room code format
+  useEffect(() => {
+    if (status === 'closed' || (view && error)) {
+      const errorMessage = error || (status === 'closed' && 'Room not found or invalid code');
+      if (errorMessage) {
+        setValidationError(errorMessage.includes('Room not found') || errorMessage.includes('invalid code')
+          ? 'Invalid room code. Please check the code or create a new room.'
+          : errorMessage);
+      }
+    }
+  }, [status, view, error]);
 
   useEffect(() => {
     if (data) setTurnSeconds(data.turnDurationSeconds);
@@ -69,6 +82,8 @@ export default function WorkerLobbyPage({ roomCode, onStartGame, onLeave }: Work
           </div>
           <button type="button" className={buttonClass} onClick={onLeave}>Leave</button>
         </header>
+
+    {validationError && <p className="mb-5 text-sm text-rose-300" role="alert">{validationError}</p>}
 
         <section className="rounded-2xl border border-white/25 bg-white/[0.05] p-5 sm:p-8">
           <div className="mb-7 flex flex-wrap items-start justify-between gap-4">
