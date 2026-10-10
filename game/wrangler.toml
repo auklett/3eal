@@ -1,6 +1,6 @@
 name = "3eal"
 main = "worker/index.ts"
-compatibility_date = "2026-10-08"
+compatibility_date = "2026-10-03"
 
 [assets]
 directory = "./dist"
@@ -16,7 +16,7 @@ tag = "v1"
 new_sqlite_classes = ["GameRoom"]
 
 [vars]
-TURNSTILE_SITE_KEY = ""
+TURNSTILE_SITE_KEY = "0x4AAAAAAFS5rDvZnmkpldLF"
 WEB_ANALYTICS_TOKEN = ""
 
 [observability]
