@@ -316,13 +316,13 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
           <section className="rounded-2xl border border-white/20 bg-white/[0.04] p-4">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-xl font-semibold">
-                {self ? `Your Table (${self.table.length}/9)` : ‘Room tables’}
+                {self ? `Your Table (${self.table.length}/9)` : 'Room tables'}
               </h2>
               {targetForAction && (
                 <p className="text-sm text-amber-100">
-                  {targetForAction === ‘CONCEAL’
-                    ? ‘Choose one of your revealed cards.’
-                    : `Choose a card on an opponent’s Table${targetForAction === ‘REVEAL’ ? ‘ that is concealed’ : ‘’}.`}
+                  {targetForAction === 'CONCEAL'
+                    ? 'Choose one of your revealed cards.'
+                    : `Choose a card on an opponent's Table${targetForAction === 'REVEAL' ? ' that is concealed' : ''}.`}
                 </p>
               )}
             </div>
@@ -333,7 +333,7 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
           </section>
 
           {/* Player’s Hand */}
-          {view.role === ‘player’ && (
+          {view.role === 'player' && (
             <section className="rounded-2xl border border-white/20 bg-white/[0.04] p-4">
               <h2 className="mb-3 text-xl font-semibold">Your Hand ({hand.length})</h2>
               <div className="flex flex-wrap justify-center gap-3">
