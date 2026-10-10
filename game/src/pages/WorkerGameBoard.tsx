@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { COLOR_HEX, countCompleteSets, findWinningPartition, type Card as EngineCard } from '@3eal/engine';
+import { COLOR_HEX, countCompleteSets, type Card as EngineCard } from '@3eal/engine';
 import CardComponent from '../components/cards/CardComponent';
 import { useRoom } from '../hooks/useRoom';
 import type { Card as UiCard } from '../types';
@@ -342,32 +342,32 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
                     key={card.id}
                     type="button"
                     disabled={!actionReady}
-                    aria-label={`Select ${card.kind === ‘action’ ? card.action : card.kind === ‘teal’ ? ‘TEAL wild’ : ‘Normal’} card`}
+                    aria-label={`Select ${card.kind === 'action' ? card.action : card.kind === 'teal' ? 'TEAL wild' : 'Normal'} card`}
                     onClick={() => {
                       setSelectedTableSlot(null);
                       setSelectedHandId((current) => current === card.id ? null : card.id);
                     }}
                     onDragStart={(e) => {
-                      if (actionReady && (card.kind === ‘normal’ || card.kind === ‘teal’)) {
-                        e.dataTransfer.setData(‘text/plain’, card.id);
-                        e.dataTransfer.effectAllowed = ‘move’;
+                      if (actionReady && (card.kind === 'normal' || card.kind === 'teal')) {
+                        e.dataTransfer.setData('text/plain', card.id);
+                        e.dataTransfer.effectAllowed = 'move';
                         setDraggedCardId(card.id);
                       }
                     }}
                     onDragEnd={() => {
                       setDraggedCardId(null);
                     }}
-                    className={`rounded-xl ${selectedHandId === card.id ? ‘ring-2 ring-teal-300’ : ‘’} ${draggedCardId === card.id ? ‘opacity-50’ : ‘’}`}
+                    className={`rounded-xl ${selectedHandId === card.id ? 'ring-2 ring-teal-300' : ''} ${draggedCardId === card.id ? 'opacity-50' : ''}`}
                   >
                     <CardComponent card={toUiCard(card)} isSelectable={actionReady} isSelected={selectedHandId === card.id} isDragging={draggedCardId === card.id} />
                   </button>
                 ))}
                 {hand.length === 0 && <p className="py-5 text-white/60">No cards in Hand.</p>}
               </div>
-              {selectedHand?.kind === ‘action’ && selectedHand.action === ‘APPEAL’ && (
+              {selectedHand?.kind === 'action' && selectedHand.action === 'APPEAL' && (
                 <p className="mt-3 text-center text-sm text-white/60">APPEAL can only be played during an eligible interrupt.</p>
               )}
-              {selectedHand?.kind === ‘normal’ || selectedHand?.kind === ‘teal’ ? (
+              {selectedHand?.kind === 'normal' || selectedHand?.kind === 'teal' ? (
                 <p className="mt-3 text-center text-sm text-white/60">Select an empty Table slot to place this card, or a card to swap when your Table is full.</p>
               ) : null}
             </section>
