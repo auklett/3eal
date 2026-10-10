@@ -68,7 +68,7 @@
   * **Portrait:** Table on top, Hand on bottom.
   * **Table:** 3×3 grid, normally max 9 cards (a STEAL can temporarily exceed this until turn end), rearrangeable locally at any time by drag-and-drop and tap-to-select/tap-to-destination. Three cards are dealt face-up at game start; their centered eye icon signals that opponents can see them.
   * **Hand:** wrapping row with no fixed maximum. All cards are drawn here first. Normal/TEAL cards can be moved to a chosen Table slot; when the Table has 9 cards, moving one swaps with the Table card at the chosen slot. Drag a Table card into the Hand to discard it.
-  * Normal and TEAL cards left in Hand at turn end are shuffled into the draw deck. Unused Action cards remain in Hand across turns.
+  * Normal and TEAL cards left in Hand at turn end are shuffled into the draw deck. All unused Action cards remain in Hand across turns.
 * **Center Area:** no draw or discard pile graphics. The remaining deck count stays in the turn status area; all discarded cards are shuffled directly into the deck.
   * Current game phase status indicator (DRAW / MAIN / INTERRUPT)
 * **Controls Area:**

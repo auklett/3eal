@@ -4,7 +4,8 @@ import { GameRoom } from './gameRoom';
 
 declare global {
   interface Env {
-    TURNSTILE_SECRET_KEY: string;
+    TURNSTILE_SECRET?: string;
+    TURNSTILE_SECRET_KEY?: string;
   }
 }
 
@@ -38,13 +39,14 @@ export default {
 };
 
 async function createRoom(request: Request, env: Env): Promise<Response> {
-  if (!env.TURNSTILE_SECRET_KEY || !env.TURNSTILE_SITE_KEY) {
+  const turnstileSecret = env.TURNSTILE_SECRET ?? env.TURNSTILE_SECRET_KEY;
+  if (!turnstileSecret || !env.TURNSTILE_SITE_KEY) {
     return Response.json({ error: 'Room creation is not configured with Turnstile yet' }, { status: 503 });
   }
   const body = await readJson(request);
   const parsed = CreateRoomSchema.safeParse(body);
   if (!parsed.success) return Response.json({ error: 'A name and valid Turnstile token are required' }, { status: 400 });
-  const verified = await verifyTurnstile(parsed.data.turnstileToken, env.TURNSTILE_SECRET_KEY);
+  const verified = await verifyTurnstile(parsed.data.turnstileToken, turnstileSecret);
   if (!verified) return Response.json({ error: 'Turnstile verification failed' }, { status: 403 });
 
   for (let attempt = 0; attempt < 5; attempt += 1) {

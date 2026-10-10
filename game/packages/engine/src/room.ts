@@ -175,9 +175,9 @@ function finishTurn(state: RoomState, now: number): void {
     return;
   }
 
-  const keptAppeals = active.hand.filter((card) => card.kind === 'action' && card.action === 'APPEAL');
-  state.discardPile.push(...active.hand.filter((card) => card.kind !== 'action' || card.action !== 'APPEAL'));
-  active.hand = keptAppeals;
+  const keptActionCards = active.hand.filter((card) => card.kind === 'action');
+  state.discardPile.push(...active.hand.filter((card) => card.kind !== 'action'));
+  active.hand = keptActionCards;
   if (active.table.length > 9) {
     const removed = active.table.splice(9);
     state.discardPile.push(...removed.map((slot) => slot.card));

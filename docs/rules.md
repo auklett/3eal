@@ -21,7 +21,7 @@ TEAL is a distinct wild card, not an ordinary Teal-colored Normal card. For a Sa
 ## Zones and visibility
 
 - **Table:** Holds Normal and TEAL cards. Cards are either revealed (visible to everyone) or concealed (identity visible only to their owner). A STEAL may temporarily take a table above nine cards until end-of-turn cleanup.
-- **Hand:** Private and unbounded. Unplayed APPEAL cards remain in Hand across turns until played; all other cards left at turn end are discarded. No card in a Hand can be targeted.
+- **Hand:** Private and unbounded. All unused Action cards remain in Hand across turns until played; all other cards left at turn end are discarded. No card in a Hand can be targeted.
 - Public views show every player's hand size, never hand contents. Players see their own hand and concealed cards. Spectators receive exactly the same public information as an opponent, with no private-card privileges.
 - Card IDs are random and must not encode card identity. Stealing preserves the card's reveal/conceal state; the thief can see it in their own private view.
 
@@ -71,7 +71,7 @@ CONCEAL targets one of the actor's own revealed Table cards. STEAL takes a Norma
 
 ### End
 
-Keep any APPEAL cards in your Hand for future interrupts and discard every other card left there. If a STEAL left your Table above nine cards, move cards to your Hand until it is back to nine; those cards are discarded in cleanup unless they are APPEAL cards. Then check whether the nine cards form three valid sets. If so, the player wins and all cards are revealed to everyone. Otherwise, the turn passes to the next player.
+Keep any unused Action cards in your Hand for future turns and discard every other card left there. If a STEAL left your Table above nine cards, move cards to your Hand until it is back to nine; those cards are discarded in cleanup unless they are Action cards. Then check whether the nine cards form three valid sets. If so, the player wins and all cards are revealed to everyone. Otherwise, the turn passes to the next player.
 
 ## Spectators, disconnects, and rejoin
 

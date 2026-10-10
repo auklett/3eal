@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { COLOR_HEX, countCompleteSets, type Card as EngineCard } from '@3eal/engine';
+import { COLOR_HEX, countCompleteSets, findWinningPartition, type Card as EngineCard } from '@3eal/engine';
 import CardComponent from '../components/cards/CardComponent';
 import { useRoom } from '../hooks/useRoom';
 import type { Card as UiCard } from '../types';
@@ -34,13 +34,20 @@ function toUiCard(card: EngineCard, revealed = false): UiCard {
       description: 'Wild card'
     };
   }
+  const actionDescriptions: Record<string, string> = {
+    CONCEAL: 'Hide a revealed card',
+    STEAL: 'Take a card from opponent',
+    REVEAL: 'Expose a concealed card',
+    APPEAL: 'Cancel an action card'
+  };
+
   return {
     id: card.id,
     category: 'ACTION',
     isRevealed: false,
     actionType: card.action,
     title: card.action,
-    description: `${card.action} action`
+    description: actionDescriptions[card.action] ?? `${card.action} action`
   };
 }
 
@@ -63,6 +70,8 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
   const [selectedTableSlot, setSelectedTableSlot] = useState<number | null>(null);
   const [rejoinName, setRejoinName] = useState('');
   const [now, setNow] = useState(Date.now());
+  const [draggedCardId, setDraggedCardId] = useState<string | null>(null);
+  const [dragOverSlot, setDragOverSlot] = useState<{ playerId: string; slotIndex: number } | null>(null);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 250);
@@ -204,7 +213,32 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
               disabled={!actionReady || playerId !== selfId || Boolean(targetForAction)}
               aria-label="Empty Table slot"
               onClick={() => handleSlotClick(playerId, index, undefined)}
-              className="h-28 w-20 rounded-xl border border-dashed border-white/20 disabled:cursor-default"
+              onDragOver={(e) => {
+                e.preventDefault();
+                if (actionReady && draggedCardId && !targetForAction && playerId === selfId) {
+                  setDragOverSlot({ playerId, slotIndex: index });
+                }
+              }}
+              onDragLeave={() => {
+                if (dragOverSlot?.playerId === playerId && dragOverSlot?.slotIndex === index) {
+                  setDragOverSlot(null);
+                }
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (actionReady && draggedCardId && !targetForAction && dragOverSlot?.playerId === playerId && dragOverSlot?.slotIndex === index) {
+                  const cardId = draggedCardId;
+                  setDraggedCardId(null);
+                  setDragOverSlot(null);
+                  // Find the card in hand
+                  const handCard = hand.find(c => c.id === cardId);
+                  if (handCard && (handCard.kind === 'normal' || handCard.kind === 'teal')) {
+                    const targetSlot = self.table.length >= 9 ? index : Math.min(index, self.table.length);
+                    send({ t: 'place', cardId: handCard.id, slot: targetSlot });
+                  }
+                }
+              }}
+              className={`h-28 w-20 rounded-xl border border-dashed border-white/20 disabled:cursor-default ${dragOverSlot?.playerId === playerId && dragOverSlot?.slotIndex === index ? 'border-2 border-teal-300' : ''}`}
             />
           );
         })}
@@ -275,54 +309,71 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
         </section>
       )}
 
-      <section className="mx-auto mb-7 max-w-6xl rounded-2xl border border-white/20 bg-white/[0.04] p-4">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-xl font-semibold">
-            {self ? `Your Table (${self.table.length}/9)` : 'Room tables'}
-          </h2>
-          {targetForAction && (
-            <p className="text-sm text-amber-100">
-              {targetForAction === 'CONCEAL'
-                ? 'Choose one of your revealed cards.'
-                : `Choose a card on an opponent’s Table${targetForAction === 'REVEAL' ? ' that is concealed' : ''}.`}
-            </p>
+      {/* Responsive layout: Table and Hand side by side on wide screens, stacked on narrow */}
+      <section className="mx-auto mb-7 max-w-6xl">
+        <div className="grid gap-6 md:grid-cols-2">
+          {/* Player’s Table */}
+          <section className="rounded-2xl border border-white/20 bg-white/[0.04] p-4">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-xl font-semibold">
+                {self ? `Your Table (${self.table.length}/9)` : ‘Room tables’}
+              </h2>
+              {targetForAction && (
+                <p className="text-sm text-amber-100">
+                  {targetForAction === ‘CONCEAL’
+                    ? ‘Choose one of your revealed cards.’
+                    : `Choose a card on an opponent’s Table${targetForAction === ‘REVEAL’ ? ‘ that is concealed’ : ‘’}.`}
+                </p>
+              )}
+            </div>
+            {self && renderTable(self.id, self.table)}
+            {self && selectedTableSlot !== null && actionReady && !selectedHand && (
+              <button type="button" className={`${buttonClass} mt-4`} onClick={moveSelectedTableCardToHand}>Move selected Table card to Hand</button>
+            )}
+          </section>
+
+          {/* Player’s Hand */}
+          {view.role === ‘player’ && (
+            <section className="rounded-2xl border border-white/20 bg-white/[0.04] p-4">
+              <h2 className="mb-3 text-xl font-semibold">Your Hand ({hand.length})</h2>
+              <div className="flex flex-wrap justify-center gap-3">
+                {hand.map((card) => (
+                  <button
+                    key={card.id}
+                    type="button"
+                    disabled={!actionReady}
+                    aria-label={`Select ${card.kind === ‘action’ ? card.action : card.kind === ‘teal’ ? ‘TEAL wild’ : ‘Normal’} card`}
+                    onClick={() => {
+                      setSelectedTableSlot(null);
+                      setSelectedHandId((current) => current === card.id ? null : card.id);
+                    }}
+                    onDragStart={(e) => {
+                      if (actionReady && (card.kind === ‘normal’ || card.kind === ‘teal’)) {
+                        e.dataTransfer.setData(‘text/plain’, card.id);
+                        e.dataTransfer.effectAllowed = ‘move’;
+                        setDraggedCardId(card.id);
+                      }
+                    }}
+                    onDragEnd={() => {
+                      setDraggedCardId(null);
+                    }}
+                    className={`rounded-xl ${selectedHandId === card.id ? ‘ring-2 ring-teal-300’ : ‘’} ${draggedCardId === card.id ? ‘opacity-50’ : ‘’}`}
+                  >
+                    <CardComponent card={toUiCard(card)} isSelectable={actionReady} isSelected={selectedHandId === card.id} isDragging={draggedCardId === card.id} />
+                  </button>
+                ))}
+                {hand.length === 0 && <p className="py-5 text-white/60">No cards in Hand.</p>}
+              </div>
+              {selectedHand?.kind === ‘action’ && selectedHand.action === ‘APPEAL’ && (
+                <p className="mt-3 text-center text-sm text-white/60">APPEAL can only be played during an eligible interrupt.</p>
+              )}
+              {selectedHand?.kind === ‘normal’ || selectedHand?.kind === ‘teal’ ? (
+                <p className="mt-3 text-center text-sm text-white/60">Select an empty Table slot to place this card, or a card to swap when your Table is full.</p>
+              ) : null}
+            </section>
           )}
         </div>
-        {self && renderTable(self.id, self.table)}
-        {self && selectedTableSlot !== null && actionReady && !selectedHand && (
-          <button type="button" className={`${buttonClass} mt-4`} onClick={moveSelectedTableCardToHand}>Move selected Table card to Hand</button>
-        )}
       </section>
-
-      {view.role === 'player' && (
-        <section className="mx-auto mb-7 max-w-6xl rounded-2xl border border-white/20 bg-white/[0.04] p-4">
-          <h2 className="mb-3 text-xl font-semibold">Your Hand ({hand.length})</h2>
-          <div className="flex flex-wrap justify-center gap-3">
-            {hand.map((card) => (
-              <button
-                key={card.id}
-                type="button"
-                disabled={!actionReady}
-                aria-label={`Select ${card.kind === 'action' ? card.action : card.kind === 'teal' ? 'TEAL wild' : 'Normal'} card`}
-                onClick={() => {
-                  setSelectedTableSlot(null);
-                  setSelectedHandId((current) => current === card.id ? null : card.id);
-                }}
-                className={`rounded-xl ${selectedHandId === card.id ? 'ring-2 ring-teal-300' : ''}`}
-              >
-                <CardComponent card={toUiCard(card)} isSelectable={actionReady} isSelected={selectedHandId === card.id} />
-              </button>
-            ))}
-            {hand.length === 0 && <p className="py-5 text-white/60">No cards in Hand.</p>}
-          </div>
-          {selectedHand?.kind === 'action' && selectedHand.action === 'APPEAL' && (
-            <p className="mt-3 text-center text-sm text-white/60">APPEAL can only be played during an eligible interrupt.</p>
-          )}
-          {selectedHand?.kind === 'normal' || selectedHand?.kind === 'teal' ? (
-            <p className="mt-3 text-center text-sm text-white/60">Select an empty Table slot to place this card, or a card to swap when your Table is full.</p>
-          ) : null}
-        </section>
-      )}
 
       <section className="mx-auto mb-7 flex max-w-6xl flex-wrap justify-center gap-3" aria-label="Turn controls">
         {view.role === 'player' && actionReady && (
@@ -362,8 +413,38 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
       {data.phase === 'finished' && (
         <section className="mx-auto mt-7 max-w-6xl rounded-2xl border border-teal-200/40 bg-teal-100/5 p-5 text-center">
           <h2 className="text-2xl font-bold">Game over</h2>
-          <p className="my-2">{data.players.find((player) => player.id === data.winnerId)?.name} wins. Every card is now revealed.</p>
-          {isHost && <button type="button" className={buttonClass} onClick={() => send({ t: 'rematch' })}>Rematch</button>}
+          <p className="my-2">{data.players.find((player) => player.id === data.winnerId)?.name} wins.</p>
+
+          {/* Show the winning sets */}
+          <div className="mt-4">
+            <h3 className="text-lg font-semibold mb-3">Winning Sets:</h3>
+            {self && ownView && (
+              <div className="grid gap-4 md:grid-cols-3 mb-4">
+                {[0, 1, 2].map((setIndex) => (
+                  <div key={`set-${setIndex}`} className="flex items-center justify-center gap-2 p-3 rounded-lg bg-white/[0.03] border border-white/10">
+                    {self.table.slice(setIndex * 3, setIndex * 3 + 3).map((slot, cardIndex) => {
+                      const card = slot.state === 'revealed' ? slot.card : ownView.you.concealedOwn[slot.cardId];
+                      return card && (
+                        <CardComponent
+                          key={`${slot.cardId}-${cardIndex}`}
+                          card={toUiCard(card, true)}
+                        />
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+            )}
+            <p className="text-sm text-white/60">
+              Each group shows a set of 3 matching cards (by color, number, or shape)
+            </p>
+          </div>
+
+          <div className="mt-6 flex flex-wrap justify-center gap-3">
+            {isHost && <button type="button" className={buttonClass} onClick={() => send({ t: 'rematch' })}>Rematch</button>}
+            <button type="button" className={`${buttonClass} bg-white/[0.04] border-white/20 hover:bg-white/[0.08]`} onClick={onReturnToLobby}>Return to Lobby</button>
+            <button type="button" className={`${buttonClass} bg-white/[0.04] border-white/20 hover:bg-white/[0.08]`} onClick={onLeave}>Main Page</button>
+          </div>
         </section>
       )}
 
