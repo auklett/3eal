@@ -232,7 +232,7 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
                   setDragOverSlot(null);
                   // Find the card in hand
                   const handCard = hand.find(c => c.id === cardId);
-                  if (handCard && (handCard.kind === 'normal' || handCard.kind === 'teal')) {
+                  if (handCard && (handCard.kind === 'normal' || handCard.kind === 'teal') && self) {
                     const targetSlot = self.table.length >= 9 ? index : Math.min(index, self.table.length);
                     send({ t: 'place', cardId: handCard.id, slot: targetSlot });
                   }
@@ -424,9 +424,10 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
                   <div key={`set-${setIndex}`} className="flex items-center justify-center gap-2 p-3 rounded-lg bg-white/[0.03] border border-white/10">
                     {self.table.slice(setIndex * 3, setIndex * 3 + 3).map((slot, cardIndex) => {
                       const card = slot.state === 'revealed' ? slot.card : ownView.you.concealedOwn[slot.cardId];
+                      const cardId = slot.state === 'revealed' ? slot.card.id : slot.cardId;
                       return card && (
                         <CardComponent
-                          key={`${slot.cardId}-${cardIndex}`}
+                          key={`${cardId}-${cardIndex}`}
                           card={toUiCard(card, true)}
                         />
                       );
