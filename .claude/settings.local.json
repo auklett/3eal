@@ -14,7 +14,10 @@
       "Bash(curl -s -o /dev/null -w \"types: %{http_code}\\\\n\" \"http://localhost:5173/src/types/index.ts\")",
       "Bash(curl -s http://localhost:5173/)",
       "Bash(npx tsc *)",
-      "Bash(npm test *)"
+      "Bash(npm test *)",
+      "Bash(npx wrangler *)",
+      "Bash(curl -s http://localhost:8787/)",
+      "Bash(curl *)"
     ]
   }
 }
