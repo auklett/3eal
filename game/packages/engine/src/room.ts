@@ -95,6 +95,23 @@ function identityInUse(state: RoomState, id: string): boolean {
   );
 }
 
+function findNextPlayerName(state: RoomState): string {
+  const existingNames = [...state.players, ...state.spectators]
+    .map(p => p.name.trim())
+    .filter(name => /^Player (\d+)$/.test(name))
+    .map(name => {
+      const match = name.match(/^Player (\d+)$/);
+      return match ? parseInt(match[1], 10) : null;
+    })
+    .filter((num): num is number => num !== null && num > 0);
+
+  let nextNum = 1;
+  while (existingNames.includes(nextNum)) {
+    nextNum++;
+  }
+  return `Player ${nextNum}`;
+}
+
 function uniqueSpectatorName(state: RoomState, name: string): string {
   const existing = [...state.players, ...state.spectators].map((participant) => normalizeName(participant.name));
   const base = `${cleanName(name)} (spectator)`;
@@ -309,7 +326,32 @@ export function addParticipant(
     return { state, error: 'Session is already a room participant' };
   }
   if (id === sessionId) return { state, error: 'Public participant and private session IDs must be different' };
-  if ([...state.players, ...state.spectators].some((participant) => normalizeName(participant.name) === normalized)) {
+
+  const existingNames = [...state.players, ...state.spectators].map((participant) => normalizeName(participant.name));
+  if (existingNames.includes(normalized)) {
+    // If the requested name is the default "Player 1" (case-insensitive), find the next available Player N
+    if (normalized === 'player 1') {
+      const finalName = findNextPlayerName(state);
+      const next = structuredClone(state);
+      const role = next.phase === 'lobby' ? requestedRole : 'spectator';
+      if (role === 'player') {
+        next.players.push({
+          id,
+          sessionIds: [sessionId],
+          name: finalName,
+          connected: true,
+          away: false,
+          awayAt: null,
+          kicked: false,
+          table: [],
+          hand: []
+        });
+      } else {
+        next.spectators.push({ id, sessionIds: [sessionId], name: cleanName(finalName), connected: true });
+      }
+      return { state: next };
+    }
+    // For custom names that are taken, return the existing error
     return { state, error: 'That name is already in use' };
   }
 

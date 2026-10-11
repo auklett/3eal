@@ -16,7 +16,7 @@
 
 ## Current validation
 
-- [x] Unit/property tests cover deck composition, deterministic IDs, TEAL sets, independent nine-card partition search, interrupt eligibility/timing, room turns, rejoin, host transfer, and view privacy.
+- [x] Unit/property tests cover deck composition, deterministic IDs, TEAL sets, independent nine-card partition search, interrupt eligibility/timing, room turns, rejoin, host transfer, view privacy, and Player N name assignment logic.
 - [x] Playwright browser test covers two players and one spectator, including absence of hands and concealed identities from spectator frames.
 - [x] Simulator reports average turns/minutes to win, first-player win rate, STEAL/APPEAL set-loss swing rates, and average player turns to first set.
 - [ ] Configure Cloudflare Turnstile keys and Web Analytics token in the deployment environment.

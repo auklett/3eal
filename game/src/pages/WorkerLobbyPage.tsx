@@ -47,6 +47,21 @@ export default function WorkerLobbyPage({ roomCode, onStartGame, onLeave }: Work
     if (data) setTurnSeconds(data.turnDurationSeconds);
   }, [data]);
 
+  // Update stored name when we receive the actual assigned name from server
+  useEffect(() => {
+    if (view && view.role === 'player' && view.data.you.id) {
+      // Find the current player in the players array to get their name
+      const currentPlayer = view.data.players.find(p => p.id === view.data.you.id);
+      if (currentPlayer) {
+        const actualName = currentPlayer.name;
+        const storedName = sessionStorage.getItem('3eal-player-name');
+        if (storedName !== actualName) {
+          sessionStorage.setItem('3eal-player-name', actualName);
+        }
+      }
+    }
+  }, [view]);
+
   const copyCode = () => {
     void navigator.clipboard.writeText(roomCode).catch(() => {
       clearError();
@@ -152,57 +167,31 @@ export default function WorkerLobbyPage({ roomCode, onStartGame, onLeave }: Work
             </section>
           </div>
 
-          {isLobby && view?.role === 'player' && (
+          {isLobby && (
             <>
-              <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-white/15 p-4">
-                <div>
-                  <h3 className="font-semibold">Your role</h3>
-                  <p className="text-sm text-white/60">You can switch roles until the host starts.</p>
-                </div>
-                <button type="button" className={buttonClass} onClick={() => send({ t: 'setRole', role: 'spectator' })}>
-                  Join as spectator
-                </button>
-              </div>
-              {/* Name change for player in lobby */}
-              <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-white/15 p-4">
-                <div>
-                  <h3 className="font-semibold">Change your name</h3>
-                  <p className="text-sm text-white/60">Choose a unique name for yourself in the lobby.</p>
-                </div>
-                <div className="flex-1 min-w-[200px]">
-                  <input
-                    type="text"
-                    placeholder="Enter new name"
-                    value={newName}
-                    onChange={(e) => setNewName(e.target.value.trim())}
-                    onKeyDown={(e) => e.key === 'Enter' && handleChangeName()}
-                    className="h-11 w-full rounded-lg border border-white/25 bg-black px-3 text-white placeholder:text-white/50 focus:border-teal-300 focus:ring-2 focus:ring-teal-300/50"
-                  />
-                  {nameError && <p className="mt-2 text-sm text-rose-300">{nameError}</p>}
-                  <button
-                    type="button"
-                    className={`mt-3 w-full ${buttonClass}`}
-                    onClick={handleChangeName}
-                    disabled={isChangingName}
-                  >
-                    {isChangingName ? 'Changing...' : 'Change Name'}
+              {view?.role === 'player' && (
+                <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-white/15 p-4">
+                  <div>
+                    <h3 className="font-semibold">Your role</h3>
+                    <p className="text-sm text-white/60">You can switch roles until the host starts.</p>
+                  </div>
+                  <button type="button" className={buttonClass} onClick={() => send({ t: 'setRole', role: 'spectator' })}>
+                    Join as spectator
                   </button>
                 </div>
-              </div>
-            </>
-          )}
-          {isLobby && view?.role === 'spectator' && (
-            <>
-              <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-white/15 p-4">
-                <div>
-                  <h3 className="font-semibold">Watching as a spectator</h3>
-                  <p className="text-sm text-white/60">Spectators receive the same public view as opposing players.</p>
+              )}
+              {view?.role === 'spectator' && (
+                <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-white/15 p-4">
+                  <div>
+                    <h3 className="font-semibold">Watching as a spectator</h3>
+                    <p className="text-sm text-white/60">Spectators receive the same public view as opposing players.</p>
+                  </div>
+                  <button type="button" className={buttonClass} onClick={() => send({ t: 'setRole', role: 'player' })}>
+                    Join as player
+                  </button>
                 </div>
-                <button type="button" className={buttonClass} onClick={() => send({ t: 'setRole', role: 'player' })}>
-                  Join as player
-                </button>
-              </div>
-              {/* Name change for spectator in lobby */}
+              )}
+              {/* Name change for lobby (shown for both players and spectators) */}
               <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-white/15 p-4">
                 <div>
                   <h3 className="font-semibold">Change your name</h3>

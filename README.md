@@ -45,6 +45,11 @@ npm run dev:worker
 
 The app is served at the URL printed by Wrangler (usually `http://localhost:8787`). `npm run dev` starts Vite alone and does not run the Worker API.
 
+## Recent Improvements
+
+- Fixed duplicate "Change your name" section in the lobby UI
+- Implemented intelligent Player N name assignment (Player 1, Player 2, etc.) with reuse of freed numbers when players leave
+
 ## Checks
 
 Run from `game/`:

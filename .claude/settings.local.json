@@ -21,7 +21,10 @@
       "Bash(wrangler dev *)",
       "Bash(lsof *)",
       "Bash(kill *)",
-      "Bash(pkill -f \"wrangler\")"
+      "Bash(pkill -f \"wrangler\")",
+      "Bash(npx vitest *)",
+      "Bash(node *)",
+      "Bash(npx ts-node *)"
     ]
   }
 }
