@@ -188,4 +188,172 @@ describe('room rules', () => {
     expect(accepted.acceptedPlayerId).toBe(targetPlayer.id);
     expect(accepted.result.state.players.find((player) => player.id === targetPlayer.id)?.connected).toBe(true);
   });
+
+  it('assigns next available Player N name when default name is taken', () => {
+    // Create room with host
+    let room = createRoom('ABCD', 'host', 'host-session', 'Host', 'seed');
+
+    // Add first player with default name "Player 1"
+    let result = addParticipant(room, 'player1', 'Player 1', 'player', 'player1-session');
+    expect('error' in result).toBe(false);
+    room = result.state;
+
+    // Add second player with default name "Player 1" - should get "Player 2"
+    result = addParticipant(room, 'player2', 'Player 1', 'player', 'player2-session');
+    expect('error' in result).toBe(false);
+    room = result.state;
+    const player2 = room.players.find(p => p.id === 'player2');
+    expect(player2).toBeDefined();
+    expect(player2?.name).toBe('Player 2');
+
+    // Add third player with default name "Player 1" - should get "Player 3"
+    result = addParticipant(room, 'player3', 'Player 1', 'player', 'player3-session');
+    expect('error' in result).toBe(false);
+    room = result.state;
+    const player3 = room.players.find(p => p.id === 'player3');
+    expect(player3).toBeDefined();
+    expect(player3?.name).toBe('Player 3');
+
+    // Add fourth player with default name "Player 1" - should get "Player 4"
+    result = addParticipant(room, 'player4', 'Player 1', 'player', 'player4-session');
+    expect('error' in result).toBe(false);
+    room = result.state;
+    const player4 = room.players.find(p => p.id === 'player4');
+    expect(player4).toBeDefined();
+    expect(player4?.name).toBe('Player 4');
+  });
+
+  it('reuses freed Player N numbers when players leave', () => {
+    // Create room with host
+    let room = createRoom('ABCD', 'host', 'host-session', 'Host', 'seed');
+
+    // Add three players with default names
+    let result = addParticipant(room, 'p1', 'Player 1', 'player', 's1');
+    expect('error' in result).toBe(false);
+    room = result.state;
+
+    result = addParticipant(room, 'p2', 'Player 1', 'player', 's2');
+    expect('error' in result).toBe(false);
+    room = result.state;
+
+    result = addParticipant(room, 'p3', 'Player 1', 'player', 's3');
+    expect('error' in result).toBe(false);
+    room = result.state;
+
+    // Verify we have Player 1, 2, 3
+    expect(room.players.find(p => p.name === 'Player 1')).toBeDefined();
+    expect(room.players.find(p => p.name === 'Player 2')).toBeDefined();
+    expect(room.players.find(p => p.name === 'Player 3')).toBeDefined();
+
+    // Remove Player 2
+    room = {
+      ...room,
+      players: room.players.filter(p => p.id !== 'p2')
+    };
+
+    // Add new player with default name - should get Player 2 (the freed number)
+    result = addParticipant(room, 'p4', 'Player 1', 'player', 's4');
+    expect('error' in result).toBe(false);
+    room = result.state;
+    const newPlayer = room.players.find(p => p.id === 'p4');
+    expect(newPlayer).toBeDefined();
+    expect(newPlayer?.name).toBe('Player 2');
+  });
+
+  it('still rejects custom names that are taken', () => {
+    // Create room with host
+    let room = createRoom('ABCD', 'host', 'host-session', 'Host', 'seed');
+
+    // Add a player with custom name
+    let result = addParticipant(room, 'player1', 'Alice', 'player', 'player1-session');
+    expect('error' in result).toBe(false);
+    room = result.state;
+
+    // Try to add another player with the same custom name - should fail
+    result = addParticipant(room, 'player2', 'Alice', 'player', 'player2-session');
+    expect('error' in result).toBe(true);
+    if ('error' in result) {
+      expect(result.error).toBe('That name is already in use');
+    }
+
+    // Try with different case - should still fail (case-insensitive)
+    result = addParticipant(room, 'player3', 'alice', 'player', 'player3-session');
+    expect('error' in result).toBe(true);
+    if ('error' in result) {
+      expect(result.error).toBe('That name is already in use');
+    }
+  });
+
+  it('allows custom names that are not taken', () => {
+    // Create room with host
+    let room = createRoom('ABCD', 'host', 'host-session', 'Host', 'seed');
+
+    // Add a player with custom name
+    let result = addParticipant(room, 'player1', 'Alice', 'player', 'player1-session');
+    expect('error' in result).toBe(false);
+    room = result.state;
+
+    // Add another player with different custom name - should succeed
+    result = addParticipant(room, 'player2', 'Bob', 'player', 'player2-session');
+    expect('error' in result).toBe(false);
+    room = result.state;
+    const bob = room.players.find(p => p.id === 'player2');
+    expect(bob).toBeDefined();
+    expect(bob?.name).toBe('Bob');
+  });
+
+  it('simulates multiple tabs joining lobby with default name', () => {
+    // Simulate the scenario described in the task:
+    // 1. Open three tabs and join lobby - should get Player 1, 2, 3
+    // 2. Fourth tab joins without error - should get Player 4
+    // 3. Close second tab, open new one - should get Player 2 (freed name)
+
+    let room = createRoom('ABCD', 'host', 'host-session', 'Host', 'seed');
+
+    // Tab 1: joins lobby (public ID: tab1-public, session ID: tab1-session)
+    let result = addParticipant(room, 'tab1-public', 'Player 1', 'player', 'tab1-session');
+    expect('error' in result).toBe(false);
+    room = result.state;
+    expect(room.players.find(p => p.id === 'tab1-public')?.name).toBe('Player 1');
+
+    // Tab 2: joins lobby (public ID: tab2-public, session ID: tab2-session)
+    result = addParticipant(room, 'tab2-public', 'Player 1', 'player', 'tab2-session');
+    expect('error' in result).toBe(false);
+    room = result.state;
+    expect(room.players.find(p => p.id === 'tab2-public')?.name).toBe('Player 2');
+
+    // Tab 3: joins lobby (public ID: tab3-public, session ID: tab3-session)
+    result = addParticipant(room, 'tab3-public', 'Player 1', 'player', 'tab3-session');
+    expect('error' in result).toBe(false);
+    room = result.state;
+    expect(room.players.find(p => p.id === 'tab3-public')?.name).toBe('Player 3');
+
+    // Tab 4: joins lobby (public ID: tab4-public, session ID: tab4-session)
+    result = addParticipant(room, 'tab4-public', 'Player 1', 'player', 'tab4-session');
+    expect('error' in result).toBe(false);
+    room = result.state;
+    expect(room.players.find(p => p.id === 'tab4-public')?.name).toBe('Player 4');
+
+    // Verify we have Players 1, 2, 3, 4 plus the Host
+    const playerNames = room.players.map(p => p.name).sort();
+    expect(playerNames).toEqual(['Host', 'Player 1', 'Player 2', 'Player 3', 'Player 4']);
+
+    // Close Tab 2 (simulate by removing the player with public ID tab2-public)
+    room = {
+      ...room,
+      players: room.players.filter(p => p.id !== 'tab2-public')
+    };
+
+    // New Tab joins (simulating Tab 2 being reopened) - public ID: tab5-public, session ID: tab5-session
+    result = addParticipant(room, 'tab5-public', 'Player 1', 'player', 'tab5-session');
+    expect('error' in result).toBe(false);
+    room = result.state;
+
+    // The new player should get the freed name "Player 2"
+    expect(room.players.find(p => p.id === 'tab5-public')?.name).toBe('Player 2');
+
+    // Verify final state: Players 1, 2 (from tab5), 3, 4 plus the Host
+    const finalPlayerNames = room.players.map(p => p.name).sort();
+    expect(finalPlayerNames).toEqual(['Host', 'Player 1', 'Player 2', 'Player 3', 'Player 4']);
+  });
 });

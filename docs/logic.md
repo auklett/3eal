@@ -42,6 +42,7 @@ interface Player {
 
 - Every room has distinct player names, compared case-insensitively after trimming whitespace.
 - New players without a custom name receive the first available default in the sequence `Player 1`, `Player 2`, `Player 3`, and so on.
+- When a player leaves, their Player N number becomes available for reuse by future players joining with the default name.
 - A returning member keeps their existing name rather than receiving a new default.
 - An explicit rename to a name already used in that room is rejected with a clear message; the current name remains unchanged.
 - Name uniqueness is enforced by the server inside the room transaction so concurrent joins cannot create duplicates.
