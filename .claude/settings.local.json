@@ -17,7 +17,11 @@
       "Bash(npm test *)",
       "Bash(npx wrangler *)",
       "Bash(curl -s http://localhost:8787/)",
-      "Bash(curl *)"
+      "Bash(curl *)",
+      "Bash(wrangler dev *)",
+      "Bash(lsof *)",
+      "Bash(kill *)",
+      "Bash(pkill -f \"wrangler\")"
     ]
   }
 }

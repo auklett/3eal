@@ -105,6 +105,7 @@ export class GameRoom extends DurableObject<Env> {
 
     if (message.t === 'rejoinDecision') return this.handleRejoinDecision(webSocket, message);
     if (message.t === 'kick') return this.handleKick(webSocket, attachment, message);
+    if (message.t === 'changeName') return this.handleChangeName(webSocket, attachment, message);
 
     if (!attachment.playerId) return this.sendError(webSocket, 'spectator_read_only', 'Spectators cannot send game actions');
     const intent = toRoomIntent(message);
@@ -269,6 +270,63 @@ export class GameRoom extends DurableObject<Env> {
       }
     }
     await this.commit();
+  }
+
+  private async handleChangeName(
+    webSocket: WebSocket,
+    attachment: Attachment,
+    message: Extract<ClientMsg, { t: 'changeName' }>
+  ): Promise<void> {
+    if (!this.room) return this.sendError(webSocket, 'room_missing', 'Room is not initialized');
+    if (!attachment.playerId) return this.sendError(webSocket, 'not_in_room', 'You must be in the room to change your name');
+
+    // Check if the new name is already taken by another player/spectator (case-insensitive)
+    const nameTaken = this.room.players.some(player =>
+      player.id !== attachment.playerId &&
+      !player.kicked &&
+      player.name.trim().toLowerCase() === message.name.trim().toLowerCase()
+    ) || this.room.spectators.some(spectator =>
+      spectator.sessionIds.includes(attachment.sessionId ?? '') &&
+      spectator.name.trim().toLowerCase() === message.name.trim().toLowerCase()
+    );
+
+    if (nameTaken) {
+      return this.sendError(webSocket, 'name_taken', 'This name is already taken by another player');
+    }
+
+    // Find the participant and update their name
+    const participantIndex = this.room.players.findIndex(player =>
+      player.id === attachment.playerId && !player.kicked
+    );
+
+    if (participantIndex !== -1) {
+      // It's a player
+      this.room.players[participantIndex].name = message.name;
+    } else {
+      // Check if it's a spectator
+      const spectatorIndex = this.room.spectators.findIndex(spectator =>
+        spectator.sessionIds.includes(attachment.sessionId ?? '')
+      );
+
+      if (spectatorIndex !== -1) {
+        this.room.spectators[spectatorIndex].name = message.name;
+      } else {
+        return this.sendError(webSocket, 'participant_not_found', 'Participant not found');
+      }
+    }
+
+    // Update the attachment with the new name
+    webSocket.serializeAttachment({
+      ...attachment,
+      name: message.name
+    } satisfies Attachment);
+
+    await this.commit();
+
+    // Send confirmation back to the client
+    this.send(webSocket, { t: 'view', view: attachment.role === 'player'
+      ? playerView(this.room, attachment.playerId)
+      : spectatorView(this.room) });
   }
 
   private async handleSocketClose(webSocket: WebSocket): Promise<void> {
