@@ -122,7 +122,7 @@ function App() {
       />
       {showRules && <RulesOverlay onClose={() => setShowRules(false)} />}
     </>
-  );
+);
 }
 
 export default App;

@@ -21,6 +21,7 @@ interface TurnstileWidgetProps {
   siteKey: string;
   resetKey: number;
   onToken: (token: string) => void;
+  onReady?: () => void;
 }
 
 export default function TurnstileWidget({ siteKey, resetKey, onToken }: TurnstileWidgetProps) {
@@ -52,13 +53,25 @@ export default function TurnstileWidget({ siteKey, resetKey, onToken }: Turnstil
       script.async = true;
       script.defer = true;
       script.dataset['3ealTurnstile'] = 'true';
+      script.addEventListener('load', render);
       document.head.append(script);
+    } else {
+      // Script element already exists, add listener only if we haven't already
+      if (!script['data-3eal-turnstile-has-listener']) {
+        script.addEventListener('load', render);
+        script['data-3eal-turnstile-has-listener'] = true;
+      }
+      // If Turnstile is already loaded, render immediately
+      if (window.turnstile) {
+        render();
+      }
     }
-    script.addEventListener('load', render);
-    render();
     return () => {
-      script?.removeEventListener('load', render);
-      if (widgetId && window.turnstile) window.turnstile.remove(widgetId);
+      if (widgetId && window.turnstile) {
+        window.turnstile.remove(widgetId);
+      }
+      // Note: We don't remove the listener here to avoid complexity with tracking
+      // the function reference. Leaving it is harmless due to early returns in render().
     };
   }, [siteKey, resetKey]);
 

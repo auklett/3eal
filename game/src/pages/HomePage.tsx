@@ -25,17 +25,36 @@ export default function HomePage({ onJoinRoom, onCreateRoom, onRules, useTurnsti
 
   useEffect(() => {
     if (!useTurnstile) return;
+    // First try the proxied route
     void fetch('/api/config')
       .then(async (response) => {
+        console.log('API config response status:', response.status);
         if (!response.ok) throw new Error('Room creation settings could not be loaded.');
         return response.json() as Promise<{ turnstileSiteKey?: string }>;
       })
       .then(({ turnstileSiteKey: siteKey }) => {
+        console.log('Received siteKey from API:', siteKey);
         if (siteKey) setTurnstileSiteKey(siteKey);
         else setTurnstileError('Room creation verification is not configured.');
       })
       .catch((configError: unknown) => {
-        setTurnstileError(configError instanceof Error ? configError.message : 'Room creation verification is unavailable.');
+        console.error('Error fetching config via proxy:', configError);
+        // Fallback to direct fetch using same origin
+        void fetch(`${window.location.origin}/api/config`)
+          .then(async (response) => {
+            console.log('Direct API config response status:', response.status);
+            if (!response.ok) throw new Error('Direct room creation settings could not be loaded.');
+            return response.json() as Promise<{ turnstileSiteKey?: string }>;
+          })
+          .then(({ turnstileSiteKey: siteKey }) => {
+            console.log('Received siteKey from direct API:', siteKey);
+            if (siteKey) setTurnstileSiteKey(siteKey);
+            else setTurnstileError('Room creation verification is not configured.');
+          })
+          .catch((directError) => {
+            console.error('Error fetching config directly:', directError);
+            setTurnstileError('Room creation verification is unavailable.');
+          });
       });
   }, [useTurnstile]);
 
@@ -53,11 +72,17 @@ export default function HomePage({ onJoinRoom, onCreateRoom, onRules, useTurnsti
     setIsCreating(true);
     setError('');
     try {
+      console.log('HandleCreateRoom called with:', { turnstileToken: turnstileToken.substring(0, 20) + '...', turnstileSiteKey: !!turnstileSiteKey });
+      // Use the stored player name from sessionStorage, or default to 'Player 1'
+      const storedName = sessionStorage.getItem('3eal-player-name') || 'Player 1';
       if (useTurnstile && !turnstileToken) throw new Error('Complete the verification before creating a room.');
-      const created = await onCreateRoom('', turnstileToken);
+      if (useTurnstile && (!turnstileToken || !turnstileSiteKey)) throw new Error('Missing Turnstile configuration or token.');
+      console.log('Calling onCreateRoom with name:', storedName, 'and token length:', turnstileToken.length);
+      const created = await onCreateRoom(storedName, turnstileToken);
       if (created.sessionId) sessionStorage.setItem(`3eal-session:${created.roomCode}`, created.sessionId);
       onJoinRoom(created.roomCode);
     } catch (createError) {
+      console.error('CreateRoom error:', createError);
       setError(createError instanceof Error ? createError.message : 'Unable to create a room.');
     } finally {
       setIsCreating(false);
@@ -119,6 +144,7 @@ export default function HomePage({ onJoinRoom, onCreateRoom, onRules, useTurnsti
                 placeholder="ENTER CODE"
               />
             </label>
+
 
             <button
               type="button"

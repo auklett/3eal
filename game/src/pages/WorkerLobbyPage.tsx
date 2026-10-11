@@ -19,6 +19,9 @@ export default function WorkerLobbyPage({ roomCode, onStartGame, onLeave }: Work
   const { view, status, error, clearError, send, rejoinRequests } = useRoom(roomCode, { name });
   const [validationError, setValidationError] = useState('');
   const [turnSeconds, setTurnSeconds] = useState(60);
+  const [newName, setNewName] = useState('');
+  const [nameError, setNameError] = useState('');
+  const [isChangingName, setIsChangingName] = useState(false);
   const data = viewData(view);
   const currentId = view?.role === 'player' ? view.data.you.id : sessionStorage.getItem(`3eal-session:${roomCode}`);
   const isHost = Boolean(data && currentId && data.hostId === currentId);
@@ -48,6 +51,22 @@ export default function WorkerLobbyPage({ roomCode, onStartGame, onLeave }: Work
     void navigator.clipboard.writeText(roomCode).catch(() => {
       clearError();
     });
+  };
+
+  const handleChangeName = () => {
+    if (!newName) {
+      setNameError('Please enter a name');
+      return;
+    }
+
+    if (newName.length < 1 || newName.length > 24) {
+      setNameError('Name must be between 1 and 24 characters');
+      return;
+    }
+
+    setIsChangingName(true);
+    setNameError('');
+    send({ t: 'changeName', name: newName });
   };
 
   const requestRejoin = () => {
@@ -134,25 +153,108 @@ export default function WorkerLobbyPage({ roomCode, onStartGame, onLeave }: Work
           </div>
 
           {isLobby && view?.role === 'player' && (
-            <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-white/15 p-4">
-              <div>
-                <h3 className="font-semibold">Your role</h3>
-                <p className="text-sm text-white/60">You can switch roles until the host starts.</p>
+            <>
+              <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-white/15 p-4">
+                <div>
+                  <h3 className="font-semibold">Your role</h3>
+                  <p className="text-sm text-white/60">You can switch roles until the host starts.</p>
+                </div>
+                <button type="button" className={buttonClass} onClick={() => send({ t: 'setRole', role: 'spectator' })}>
+                  Join as spectator
+                </button>
               </div>
-              <button type="button" className={buttonClass} onClick={() => send({ t: 'setRole', role: 'spectator' })}>
-                Join as spectator
-              </button>
-            </div>
+              {/* Name change for player in lobby */}
+              <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-white/15 p-4">
+                <div>
+                  <h3 className="font-semibold">Change your name</h3>
+                  <p className="text-sm text-white/60">Choose a unique name for yourself in the lobby.</p>
+                </div>
+                <div className="flex-1 min-w-[200px]">
+                  <input
+                    type="text"
+                    placeholder="Enter new name"
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value.trim())}
+                    onKeyDown={(e) => e.key === 'Enter' && handleChangeName()}
+                    className="h-11 w-full rounded-lg border border-white/25 bg-black px-3 text-white placeholder:text-white/50 focus:border-teal-300 focus:ring-2 focus:ring-teal-300/50"
+                  />
+                  {nameError && <p className="mt-2 text-sm text-rose-300">{nameError}</p>}
+                  <button
+                    type="button"
+                    className={`mt-3 w-full ${buttonClass}`}
+                    onClick={handleChangeName}
+                    disabled={isChangingName}
+                  >
+                    {isChangingName ? 'Changing...' : 'Change Name'}
+                  </button>
+                </div>
+              </div>
+            </>
           )}
           {isLobby && view?.role === 'spectator' && (
+            <>
+              <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-white/15 p-4">
+                <div>
+                  <h3 className="font-semibold">Watching as a spectator</h3>
+                  <p className="text-sm text-white/60">Spectators receive the same public view as opposing players.</p>
+                </div>
+                <button type="button" className={buttonClass} onClick={() => send({ t: 'setRole', role: 'player' })}>
+                  Join as player
+                </button>
+              </div>
+              {/* Name change for spectator in lobby */}
+              <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-white/15 p-4">
+                <div>
+                  <h3 className="font-semibold">Change your name</h3>
+                  <p className="text-sm text-white/60">Choose a unique name for yourself in the lobby.</p>
+                </div>
+                <div className="flex-1 min-w-[200px]">
+                  <input
+                    type="text"
+                    placeholder="Enter new name"
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value.trim())}
+                    onKeyDown={(e) => e.key === 'Enter' && handleChangeName()}
+                    className="h-11 w-full rounded-lg border border-white/25 bg-black px-3 text-white placeholder:text-white/50 focus:border-teal-300 focus:ring-2 focus:ring-teal-300/50"
+                  />
+                  {nameError && <p className="mt-2 text-sm text-rose-300">{nameError}</p>}
+                  <button
+                    type="button"
+                    className={`mt-3 w-full ${buttonClass}`}
+                    onClick={handleChangeName}
+                    disabled={isChangingName}
+                  >
+                    {isChangingName ? 'Changing...' : 'Change Name'}
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+          {isLobby && (
             <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-white/15 p-4">
               <div>
-                <h3 className="font-semibold">Watching as a spectator</h3>
-                <p className="text-sm text-white/60">Spectators receive the same public view as opposing players.</p>
+                <h3 className="font-semibold">Change your name</h3>
+                <p className="text-sm text-white/60">Choose a unique name for yourself in the lobby.</p>
               </div>
-              <button type="button" className={buttonClass} onClick={() => send({ t: 'setRole', role: 'player' })}>
-                Join as player
-              </button>
+              <div className="flex-1 min-w-[200px]">
+                <input
+                  type="text"
+                  placeholder="Enter new name"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value.trim())}
+                  onKeyDown={(e) => e.key === 'Enter' && handleChangeName()}
+                  className="h-11 w-full rounded-lg border border-white/25 bg-black px-3 text-white placeholder:text-white/50 focus:border-teal-300 focus:ring-2 focus:ring-teal-300/50"
+                />
+                {nameError && <p className="mt-2 text-sm text-rose-300">{nameError}</p>}
+                <button
+                  type="button"
+                  className={`mt-3 w-full ${buttonClass}`}
+                  onClick={handleChangeName}
+                  disabled={isChangingName}
+                >
+                  {isChangingName ? 'Changing...' : 'Change Name'}
+                </button>
+              </div>
             </div>
           )}
           {view?.role === 'spectator' && data.phase !== 'lobby' && (

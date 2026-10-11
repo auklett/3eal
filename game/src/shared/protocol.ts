@@ -27,7 +27,8 @@ export const ClientMsgSchema = z.discriminatedUnion('t', [
   z.object({ t: z.literal('rejoin'), name: nameSchema, sessionId: playerIdSchema }).strict(),
   z.object({ t: z.literal('rejoinDecision'), requestId: z.string().uuid(), accept: z.boolean() }).strict(),
   z.object({ t: z.literal('kick'), targetId: playerIdSchema }).strict(),
-  z.object({ t: z.literal('rematch') }).strict()
+  z.object({ t: z.literal('rematch') }).strict(),
+  z.object({ t: z.literal('changeName'), name: nameSchema }).strict()
 ]);
 
 export const CreateRoomSchema = z.object({
