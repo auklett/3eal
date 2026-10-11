@@ -57,9 +57,9 @@ export default function TurnstileWidget({ siteKey, resetKey, onToken }: Turnstil
       document.head.append(script);
     } else {
       // Script element already exists, add listener only if we haven't already
-      if (!script['data-3eal-turnstile-has-listener']) {
+      if (!script.dataset['3ealTurnstileHasListener']) {
         script.addEventListener('load', render);
-        script['data-3eal-turnstile-has-listener'] = true;
+        script.dataset['3ealTurnstileHasListener'] = 'true';
       }
       // If Turnstile is already loaded, render immediately
       if (window.turnstile) {
