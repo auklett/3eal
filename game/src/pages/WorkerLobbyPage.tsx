@@ -230,33 +230,6 @@ export default function WorkerLobbyPage({ roomCode, onStartGame, onLeave }: Work
               </div>
             </>
           )}
-          {isLobby && (
-            <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-white/15 p-4">
-              <div>
-                <h3 className="font-semibold">Change your name</h3>
-                <p className="text-sm text-white/60">Choose a unique name for yourself in the lobby.</p>
-              </div>
-              <div className="flex-1 min-w-[200px]">
-                <input
-                  type="text"
-                  placeholder="Enter new name"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value.trim())}
-                  onKeyDown={(e) => e.key === 'Enter' && handleChangeName()}
-                  className="h-11 w-full rounded-lg border border-white/25 bg-black px-3 text-white placeholder:text-white/50 focus:border-teal-300 focus:ring-2 focus:ring-teal-300/50"
-                />
-                {nameError && <p className="mt-2 text-sm text-rose-300">{nameError}</p>}
-                <button
-                  type="button"
-                  className={`mt-3 w-full ${buttonClass}`}
-                  onClick={handleChangeName}
-                  disabled={isChangingName}
-                >
-                  {isChangingName ? 'Changing...' : 'Change Name'}
-                </button>
-              </div>
-            </div>
-          )}
           {view?.role === 'spectator' && data.phase !== 'lobby' && (
             <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-white/15 p-4">
               <div>
