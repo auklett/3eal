@@ -36,6 +36,19 @@ export default {
       return createRoom(request, env);
     }
 
+    // Lightweight existence probe. This addresses the Durable Object (which
+    // instantiates it) but never writes a room row or leaves half-created
+    // state behind.
+    const existsMatch = url.pathname.match(/^\/api\/rooms\/([A-Z0-9]{4,6})\/exists$/i);
+    if (existsMatch && request.method === 'GET') {
+      const roomCode = existsMatch[1].toUpperCase();
+      const id = env.GAME_ROOM.idFromName(roomCode);
+      const response = await env.GAME_ROOM.get(id).fetch('https://game-room/internal/exists');
+      if (!response.ok) return Response.json({ error: 'Room lookup failed' }, { status: 502 });
+      const payload = await readJson(response) as { exists?: boolean } | null;
+      return Response.json({ roomCode, exists: payload?.exists === true });
+    }
+
     const match = url.pathname.match(/^\/api\/rooms\/([A-Z0-9]{4,6})\/ws$/i);
     if (match && request.method === 'GET') {
       const roomCode = match[1].toUpperCase();
@@ -48,56 +61,63 @@ export default {
 };
 
 async function createRoom(request: Request, env: Env): Promise<Response> {
-  console.log('=== CREATE ROOM START ===');
-  console.log('Environment TURNSTILE_SITE_KEY:', env.TURNSTILE_SITE_KEY ? 'present' : 'missing');
-  console.log('Environment TURNSTILE_SECRET_KEY:', env.TURNSTILE_SECRET_KEY ? 'present' : 'missing');
-  console.log('Environment TURNSTILE_SECRET:', env.TURNSTILE_SECRET ? 'present' : 'missing');
-  const turnstileSecret = env.TURNSTILE_SECRET ?? env.TURNSTILE_SECRET_KEY;
-  if (!turnstileSecret || !env.TURNSTILE_SITE_KEY) {
-    console.log('Missing Turnstile configuration - secret:', !!turnstileSecret, 'siteKey:', !!env.TURNSTILE_SITE_KEY);
-    return Response.json({ error: 'Room creation is not configured with Turnstile yet' }, { status: 503 });
-  }
   const body = await readJson(request);
-  // Debug: log what we received
-  console.log('CreateRoom request body:', body);
   const parsed = CreateRoomSchema.safeParse(body);
   if (!parsed.success) {
-    // Log detailed Zod error information - force output
-    console.log('=== CREATE ROOM VALIDATION FAILED ===');
-    console.log('Request body:', JSON.stringify(body, null, 2));
-    console.log('Zod error:', parsed.error);
-    console.log('Zod error issues:', JSON.stringify(parsed.error.issues, null, 2));
-    for (const issue of parsed.error.issues) {
-      console.log(`  - Path: ${issue.path?.join(' -> ') || 'root'}, Message: ${issue.message}, Code: ${issue.code}`);
-    }
-    console.log('=== END VALIDATION ERROR ===');
-    return Response.json({ error: 'A name and valid Turnstile token are required' }, { status: 400 });
+    return Response.json({ error: 'A player name is required' }, { status: 400 });
   }
-  console.log('Parsed data:', parsed.data);
-  const verified = await verifyTurnstile(parsed.data.turnstileToken, turnstileSecret);
-  if (!verified) return Response.json({ error: 'Turnstile verification failed' }, { status: 403 });
+
+  // Turnstile is always enforced server-side when a secret is configured. The
+  // client only relaxes its own token requirement when no site key is present,
+  // which must never weaken this gate.
+  const turnstileSecret = env.TURNSTILE_SECRET ?? env.TURNSTILE_SECRET_KEY;
+  if (turnstileSecret) {
+    const token = parsed.data.turnstileToken;
+    if (!token || !(await verifyTurnstile(token, turnstileSecret))) {
+      return Response.json({ error: 'Turnstile verification failed' }, { status: 403 });
+    }
+  }
+
+  if (parsed.data.roomCode) {
+    const result = await initializeRoom(env, parsed.data.roomCode, parsed.data.name);
+    if (result.status === 409) {
+      return Response.json({ error: 'That room code is already in use. Choose another.' }, { status: 409 });
+    }
+    if (!result.ok) return Response.json({ error: 'The room could not be initialized' }, { status: 500 });
+    const payload = await result.json() as { hostSessionId: string };
+    return Response.json({ roomCode: parsed.data.roomCode, sessionId: payload.hostSessionId }, { status: 201 });
+  }
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const roomCode = generateRoomCode();
-    const hostId = crypto.randomUUID();
-    const hostSessionId = crypto.randomUUID();
-    const stub = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(roomCode));
-    const result = await stub.fetch('https://game-room/internal/initialize', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        roomCode,
-        hostId,
-        hostSessionId,
-        hostName: parsed.data.name,
-        seed: crypto.randomUUID()
-      })
-    });
+    const result = await initializeRoom(env, roomCode, parsed.data.name);
     if (result.status === 409) continue;
     if (!result.ok) return Response.json({ error: 'The room could not be initialized' }, { status: 500 });
-    return Response.json({ roomCode, sessionId: hostSessionId }, { status: 201 });
+    const payload = await result.json() as { hostSessionId: string };
+    return Response.json({ roomCode, sessionId: payload.hostSessionId }, { status: 201 });
   }
   return Response.json({ error: 'Could not allocate a unique room code; try again' }, { status: 503 });
+}
+
+/** Creates a room atomically for a specific code; returns the DO response. */
+async function initializeRoom(env: Env, roomCode: string, hostName: string): Promise<Response> {
+  const hostId = crypto.randomUUID();
+  const hostSessionId = crypto.randomUUID();
+  const stub = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(roomCode));
+  const result = await stub.fetch('https://game-room/internal/initialize', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      roomCode,
+      hostId,
+      hostSessionId,
+      hostName,
+      seed: crypto.randomUUID()
+    })
+  });
+  if (result.status === 409) return new Response(null, { status: 409 });
+  if (!result.ok) return new Response(null, { status: 500 });
+  return Response.json({ hostSessionId });
 }
 
 async function verifyTurnstile(token: string, secret: string): Promise<boolean> {

@@ -4,10 +4,14 @@ import {
   type ClientMsg,
   type View
 } from '../shared/protocol';
+import { roomExists } from '../logic/createRoom';
 
 type RoomCommand = Exclude<ClientMsg, { t: 'join' } | { t: 'rejoin' }>;
-type ConnectionStatus = 'connecting' | 'connected' | 'reconnecting' | 'awaitingApproval' | 'closed';
+type ConnectionStatus = 'connecting' | 'connected' | 'reconnecting' | 'awaitingApproval' | 'notFound' | 'closed';
 type RejoinRequest = { requestId: string; name: string };
+
+/** Copy shown while a server-bound action is in flight, and once it is accepted. */
+export type SendFeedback = { pending: string; confirmation: string };
 
 interface UseRoomOptions {
   name: string;
@@ -49,7 +53,6 @@ function applyOptimistic(view: View, message: RoomCommand): View {
     }
     delete data.you.concealedOwn[message.cardId];
     data.you.concealedOwn[message.cardId] = card;
-    own.handCount = data.you.hand.length;
     return { role: 'player', data };
   }
 
@@ -60,26 +63,22 @@ function applyOptimistic(view: View, message: RoomCommand): View {
     if (card) data.you.hand.push(card);
     if (slot.state === 'concealed') delete data.you.concealedOwn[slot.cardId];
     own.table.splice(message.slot, 1);
-    own.handCount = data.you.hand.length;
     return { role: 'player', data };
   }
 
   if (message.t === 'action') {
     data.you.hand = data.you.hand.filter((card) => card.id !== message.cardId);
-    own.handCount = data.you.hand.length;
     return { role: 'player', data };
   }
 
   if (message.t === 'appeal') {
     data.you.hand = data.you.hand.filter((card) => card.id !== message.cardId);
-    own.handCount = data.you.hand.length;
     data.interrupt = null;
     return { role: 'player', data };
   }
 
   if (message.t === 'endTurn') {
     data.you.hand = [];
-    own.handCount = 0;
     return { role: 'player', data };
   }
 
@@ -96,8 +95,26 @@ export function useRoom(roomCode: string, options: UseRoomOptions) {
   const [status, setStatus] = useState<ConnectionStatus>('connecting');
   const [error, setError] = useState('');
   const [rejoinRequests, setRejoinRequests] = useState<RejoinRequest[]>([]);
+  const [pending, setPending] = useState<string | null>(null);
+  const [confirmation, setConfirmation] = useState<string | null>(null);
   const canonicalView = useRef<View | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
+  const pendingConfirmation = useRef<string | null>(null);
+  const confirmationTimer = useRef<number | undefined>(undefined);
+
+  // Clears the in-flight action once the server answers: an accepted snapshot
+  // shows the confirmation, a rejection just stops the pending state (the
+  // server's error is surfaced through `error`).
+  const settlePending = useCallback((accepted: boolean) => {
+    if (pendingConfirmation.current === null) return;
+    const text = pendingConfirmation.current;
+    pendingConfirmation.current = null;
+    setPending(null);
+    if (!accepted) return;
+    setConfirmation(text);
+    if (confirmationTimer.current !== undefined) window.clearTimeout(confirmationTimer.current);
+    confirmationTimer.current = window.setTimeout(() => setConfirmation(null), 2500);
+  }, []);
 
   useEffect(() => {
     let stopped = false;
@@ -151,10 +168,12 @@ export function useRoom(roomCode: string, options: UseRoomOptions) {
           setView(message.view);
           setStatus('connected');
           setError('');
+          settlePending(true);
         } else if (message.t === 'error') {
           setView(canonicalView.current);
           setError(message.message);
           if (message.code === 'kicked') setStatus('closed');
+          settlePending(false);
         } else if (message.t === 'rejoinPending') {
           setStatus('awaitingApproval');
           setError('Waiting for the host to approve your rejoin request.');
@@ -173,10 +192,32 @@ export function useRoom(roomCode: string, options: UseRoomOptions) {
         if (socketRef.current === socket) socketRef.current = null;
         if (stopped) return;
         setView(canonicalView.current);
-        retryCount += 1;
-        const delay = Math.min(500 * (2 ** Math.min(retryCount - 1, 5)), 15_000);
-        setStatus('reconnecting');
-        retryTimer = window.setTimeout(connect, delay);
+        const scheduleRetry = () => {
+          retryCount += 1;
+          const delay = Math.min(500 * (2 ** Math.min(retryCount - 1, 5)), 15_000);
+          setStatus('reconnecting');
+          retryTimer = window.setTimeout(connect, delay);
+        };
+        // If we never received a view, the room may simply not exist. Probe it
+        // so a missing room shows "Room not found" instead of "Reconnecting…".
+        if (!canonicalView.current) {
+          void roomExists(roomCode)
+            .then((exists) => {
+              if (stopped) return;
+              if (exists) {
+                scheduleRetry();
+              } else {
+                setStatus('notFound');
+                setError('Room not found.');
+              }
+            })
+            .catch(() => {
+              if (stopped) return;
+              scheduleRetry();
+            });
+          return;
+        }
+        scheduleRetry();
       });
 
       socket.addEventListener('error', () => {
@@ -188,19 +229,28 @@ export function useRoom(roomCode: string, options: UseRoomOptions) {
     return () => {
       stopped = true;
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+      if (confirmationTimer.current !== undefined) window.clearTimeout(confirmationTimer.current);
       socketRef.current?.close(1000, 'component-unmounted');
       socketRef.current = null;
       setStatus('closed');
     };
-  }, [roomCode, options.name, options.role]);
+  }, [roomCode, options.name, options.role, settlePending]);
 
-  const send = useCallback((message: RoomCommand) => {
+  const send = useCallback((message: RoomCommand, feedback?: SendFeedback) => {
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       setError('Not connected to the room. Please wait for reconnection.');
       return false;
     }
     setError('');
+    if (feedback) {
+      // Optimistically show the in-flight state; the server snapshot (or its
+      // error) resolves it in the message handler above.
+      pendingConfirmation.current = feedback.confirmation;
+      setConfirmation(null);
+      setPending(feedback.pending);
+      if (confirmationTimer.current !== undefined) window.clearTimeout(confirmationTimer.current);
+    }
     setView((current) => current ? applyOptimistic(current, message) : current);
     try {
       socket.send(JSON.stringify(message));
@@ -208,10 +258,14 @@ export function useRoom(roomCode: string, options: UseRoomOptions) {
     } catch (sendError) {
       setView(canonicalView.current);
       setError(sendError instanceof Error ? sendError.message : 'Could not send the room action.');
+      if (feedback) {
+        pendingConfirmation.current = null;
+        setPending(null);
+      }
       return false;
     }
   }, []);
 
   const clearError = useCallback(() => setError(''), []);
-  return { view, status, error, clearError, send, rejoinRequests };
+  return { view, status, error, clearError, send, rejoinRequests, pending, confirmation };
 }

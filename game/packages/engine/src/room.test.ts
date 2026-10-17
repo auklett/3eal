@@ -36,6 +36,21 @@ describe('room rules', () => {
     expect(started.players[0].sessionIds).not.toContain(started.players[0].id);
   });
 
+  it('refuses to start when the deck cannot deal three Table cards per player', () => {
+    let room = createRoom('ABCD', 'host', 'host-session', 'Host', 'seed');
+    for (let index = 1; index <= 99; index += 1) {
+      const joined = addParticipant(room, `player-${index}`, `Player ${index}`, 'player', `session-${index}`);
+      if ('error' in joined) throw new Error(joined.error);
+      room = joined.state;
+    }
+    expect(room.players).toHaveLength(100);
+
+    // The deck only holds 178 Normal + TEAL cards, well short of 100 × 3.
+    const result = reduceRoom(room, 'host', { t: 'start' }, 1000);
+    expect(result).toMatchObject({ error: 'There are not enough Normal and TEAL cards to deal this many players' });
+    expect(result.state.phase).toBe('lobby');
+  });
+
   it('never restores a seat from its public participant ID', () => {
     const room = startTwoPlayerRoom();
     const host = room.players.find((player) => player.id === room.hostId);
@@ -73,7 +88,7 @@ describe('room rules', () => {
         { id: 'saved-appeal', kind: 'action', action: 'APPEAL' },
         { id: 'unused-steal', kind: 'action', action: 'STEAL' }
       ]);
-    expect(result.state.discardPile).toContainEqual({ id: 'normal-card', kind: 'normal', color: 'periwinkle', number: 1, shape: 'circle', isRevealed: true });
+    expect(result.state.deck).toContainEqual({ id: 'normal-card', kind: 'normal', color: 'periwinkle', number: 1, shape: 'circle', isRevealed: true });
   });
 
   it('pauses the turn clock during an interrupt and resumes it after every appeal-holder passes', () => {
@@ -302,8 +317,7 @@ describe('room rules', () => {
     expect(bob?.name).toBe('Bob');
   });
 
-  it('simulates multiple tabs joining lobby with default name', () => {
-    // Simulate the scenario described in the task:
+  it('simulates multiple tabs joining lobby with default name', () => {    // Simulate the scenario described in the task:
     // 1. Open three tabs and join lobby - should get Player 1, 2, 3
     // 2. Fourth tab joins without error - should get Player 4
     // 3. Close second tab, open new one - should get Player 2 (freed name)
@@ -355,5 +369,183 @@ describe('room rules', () => {
     // Verify final state: Players 1, 2 (from tab5), 3, 4 plus the Host
     const finalPlayerNames = room.players.map(p => p.name).sort();
     expect(finalPlayerNames).toEqual(['Host', 'Player 1', 'Player 2', 'Player 3', 'Player 4']);
+  });
+});
+
+function interruptRoom(): RoomState {
+  const room = startTwoPlayerRoom();
+  const active = room.players.find((player) => player.id === room.activePlayerId);
+  const opponent = room.players.find((player) => player.id !== room.activePlayerId);
+  if (!active || !opponent) throw new Error('Expected two players');
+  active.hand.push({ id: 'conceal-action', kind: 'action', action: 'CONCEAL' });
+  active.table[0].revealed = true;
+  opponent.hand.push({ id: 'appeal', kind: 'action', action: 'APPEAL' });
+  const action = reduceRoom(room, active.id, {
+    t: 'action',
+    cardId: 'conceal-action',
+    kind: 'CONCEAL',
+    targetId: active.id,
+    slot: 0
+  }, 10_000);
+  if ('error' in action) throw new Error(action.error);
+  return action.state;
+}
+
+describe('host pause and resume', () => {
+  it('only allows the host to pause and resume during play', () => {
+    const room = startTwoPlayerRoom();
+    const guest = room.players.find((player) => player.id !== room.hostId);
+    if (!guest) throw new Error('Expected a guest');
+    expect(reduceRoom(room, guest.id, { t: 'pause' }, 0))
+      .toMatchObject({ error: 'Only the host can pause the game' });
+
+    const lobby = createRoom('WXYZ', 'host', 'host-session', 'Host', 'seed');
+    expect(reduceRoom(lobby, 'host', { t: 'pause' }, 0))
+      .toMatchObject({ error: 'The game can only be paused during play' });
+
+    const paused = reduceRoom(room, room.hostId, { t: 'pause' }, 0);
+    if ('error' in paused) throw new Error(paused.error);
+    expect(paused.state.paused).toBe(true);
+    expect(reduceRoom(paused.state, room.hostId, { t: 'pause' }, 0))
+      .toMatchObject({ error: 'The game is already paused' });
+    expect(reduceRoom(paused.state, guest.id, { t: 'resume' }, 0))
+      .toMatchObject({ error: 'Only the host can resume the game' });
+  });
+
+  it('preserves the exact remaining turn time across pause and resume', () => {
+    const room = startTwoPlayerRoom();
+    const paused = reduceRoom(room, room.hostId, { t: 'pause' }, 11_000);
+    if ('error' in paused) throw new Error(paused.error);
+    expect(paused.state.turnEndsAt).toBeNull();
+    expect(paused.state.turnRemainingMs).toBe(50_000);
+    expect(nextRoomDeadline(paused.state)).toBeNull();
+
+    // Nothing expires while paused, no matter how much time passes.
+    const frozen = processDeadlines(paused.state, 10_000_000);
+    expect(frozen.state.turnEndsAt).toBeNull();
+    expect(frozen.state.phase).toBe('playing');
+
+    const resumed = reduceRoom(paused.state, room.hostId, { t: 'resume' }, 500_000);
+    if ('error' in resumed) throw new Error(resumed.error);
+    expect(resumed.state.paused).toBe(false);
+    expect(resumed.state.turnRemainingMs).toBeNull();
+    expect(resumed.state.turnEndsAt).toBe(550_000);
+    expect(nextRoomDeadline(resumed.state)).toBe(550_000);
+  });
+
+  it('freezes the interrupt timer and re-arms the earliest deadline on resume', () => {
+    const room = interruptRoom();
+    expect(room.pendingAction?.interrupt.endsAt).toBe(40_000);
+    expect(room.turnRemainingMs).toBe(51_000);
+
+    const paused = reduceRoom(room, room.hostId, { t: 'pause' }, 20_000);
+    if ('error' in paused) throw new Error(paused.error);
+    expect(paused.state.pendingAction?.interrupt.endsAt).toBeNull();
+    expect(paused.state.pauseRemaining).toMatchObject({ turn: 51_000, interrupt: 20_000 });
+    expect(nextRoomDeadline(paused.state)).toBeNull();
+
+    const resumed = reduceRoom(paused.state, room.hostId, { t: 'resume' }, 100_000);
+    if ('error' in resumed) throw new Error(resumed.error);
+    expect(resumed.state.pendingAction?.interrupt.endsAt).toBe(120_000);
+    expect(resumed.state.turnEndsAt).toBe(151_000);
+    expect(nextRoomDeadline(resumed.state)).toBe(120_000);
+  });
+
+  it('rejects every game action while paused but allows host management', () => {
+    const room = interruptRoom();
+    const active = room.players.find((player) => player.id === room.activePlayerId);
+    if (!active) throw new Error('Expected an active player');
+    const paused = reduceRoom(room, room.hostId, { t: 'pause' }, 20_000);
+    if ('error' in paused) throw new Error(paused.error);
+    const state = paused.state;
+
+    expect(reduceRoom(state, active.id, { t: 'endTurn' }, 20_000)).toMatchObject({ error: 'Game is paused' });
+    expect(reduceRoom(state, active.id, { t: 'toHand', slot: 0 }, 20_000)).toMatchObject({ error: 'Game is paused' });
+    expect(reduceRoom(state, active.id, { t: 'place', cardId: 'x', slot: 0 }, 20_000)).toMatchObject({ error: 'Game is paused' });
+    expect(reduceRoom(state, active.id, { t: 'pass' }, 20_000)).toMatchObject({ error: 'Game is paused' });
+    expect(reduceRoom(state, active.id, { t: 'appeal', cardId: 'appeal' }, 20_000)).toMatchObject({ error: 'Game is paused' });
+
+    // Host management actions remain available while paused.
+    const guest = room.players.find((player) => player.id !== room.hostId);
+    if (!guest) throw new Error('Expected a guest');
+    expect('error' in reduceRoom(state, room.hostId, { t: 'resume' }, 20_000)).toBe(false);
+  });
+
+  it('keeps the game paused when the host transfers, and never auto-resumes', () => {
+    const room = startTwoPlayerRoom();
+    const paused = reduceRoom(room, room.hostId, { t: 'pause' }, 1_000);
+    if ('error' in paused) throw new Error(paused.error);
+    const nextHost = paused.state.players.find((player) => player.id !== paused.state.hostId);
+    if (!nextHost) throw new Error('Expected a second player');
+
+    const disconnected = setParticipantConnected(paused.state, paused.state.hostId, false, 5_000);
+    expect(disconnected.paused).toBe(true);
+    expect(disconnected.hostId).toBe(nextHost.id);
+    expect(nextRoomDeadline(disconnected)).toBeNull();
+
+    const resumed = reduceRoom(disconnected, nextHost.id, { t: 'resume' }, 10_000);
+    if ('error' in resumed) throw new Error(resumed.error);
+    expect(resumed.state.paused).toBe(false);
+  });
+
+  it('does not mark players away or skip turns while paused, and resumes their clocks', () => {
+    const room = startTwoPlayerRoom();
+    const activeId = room.activePlayerId;
+    if (!activeId) throw new Error('Expected an active player');
+    const paused = reduceRoom(room, room.hostId, { t: 'pause' }, 1_000);
+    if ('error' in paused) throw new Error(paused.error);
+
+    const disconnected = setParticipantConnected(paused.state, activeId, false, 5_000);
+    const player = disconnected.players.find((candidate) => candidate.id === activeId);
+    expect(player?.away).toBe(false);
+    expect(player?.awayAt).toBeNull();
+    expect(disconnected.pauseRemaining?.away[activeId]).toBe(60_000);
+
+    const later = processDeadlines(disconnected, 10_000_000);
+    expect(later.state.players.find((candidate) => candidate.id === activeId)?.away).toBe(false);
+    expect(later.state.activePlayerId).toBe(activeId);
+
+    const resumed = reduceRoom(disconnected, disconnected.hostId, { t: 'resume' }, 20_000);
+    if ('error' in resumed) throw new Error(resumed.error);
+    expect(resumed.state.players.find((candidate) => candidate.id === activeId)?.awayAt).toBe(80_000);
+  });
+
+  it('keeps an already-away player’s stored remaining time across pause and resume', () => {
+    const room = startTwoPlayerRoom();
+    const guest = room.players.find((player) => player.id !== room.hostId);
+    if (!guest) throw new Error('Expected a guest');
+
+    // The guest disconnected before the pause, so their 60s clock is running.
+    const disconnected = setParticipantConnected(room, guest.id, false, 10_000);
+    expect(disconnected.players.find((player) => player.id === guest.id)?.awayAt).toBe(70_000);
+
+    // Pause half-way through: 30s must be stored, not restarted at 60s.
+    const paused = reduceRoom(disconnected, room.hostId, { t: 'pause' }, 40_000);
+    if ('error' in paused) throw new Error(paused.error);
+    expect(paused.state.pauseRemaining?.away[guest.id]).toBe(30_000);
+    expect(paused.state.players.find((player) => player.id === guest.id)?.awayAt).toBeNull();
+
+    const resumed = reduceRoom(paused.state, room.hostId, { t: 'resume' }, 1_000_000);
+    if ('error' in resumed) throw new Error(resumed.error);
+    expect(resumed.state.players.find((player) => player.id === guest.id)?.awayAt).toBe(1_030_000);
+  });
+
+  it('freezes pending rejoin-request timers while paused', () => {
+    const room = startTwoPlayerRoom();
+    const requested = requestRejoin(room, 'req', 'new-session', 'spectator-public', 'Guest', 1_000);
+    if ('error' in requested) throw new Error(requested.error);
+    expect(nextRoomDeadline(requested.state)).toBe(61_000);
+
+    const paused = reduceRoom(requested.state, requested.state.hostId, { t: 'pause' }, 11_000);
+    if ('error' in paused) throw new Error(paused.error);
+    expect(paused.state.pauseRemaining?.rejoin['req']).toBe(50_000);
+
+    const frozen = processDeadlines(paused.state, 10_000_000);
+    expect(frozen.expiredRejoinIds).toEqual([]);
+    expect(frozen.state.rejoinRequests).toHaveLength(1);
+
+    const resumed = reduceRoom(paused.state, paused.state.hostId, { t: 'resume' }, 100_000);
+    if ('error' in resumed) throw new Error(resumed.error);
+    expect(resumed.state.rejoinRequests[0].expiresAt).toBe(150_000);
   });
 });

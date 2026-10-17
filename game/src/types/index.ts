@@ -44,7 +44,6 @@ export type PendingAction = {
 
 export type GameState = {
   deck: Card[];
-  discardPile: Card[];
   activePlayerId: string;
   turnNumber?: number;
   turnPhase: TurnPhase;

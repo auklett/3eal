@@ -16,6 +16,7 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "worker:typecheck": "wrangler types && tsc --noEmit -p tsconfig.worker.json",
+    "typecheck:e2e": "tsc --noEmit -p tsconfig.e2e.json",
     "deploy": "npm run build && wrangler deploy"
   },
   "dependencies": {

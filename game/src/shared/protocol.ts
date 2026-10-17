@@ -11,6 +11,8 @@ export const ClientMsgSchema = z.discriminatedUnion('t', [
   z.object({ t: z.literal('join'), name: nameSchema, sessionId: playerIdSchema, role: z.enum(['player', 'spectator']).default('player') }).strict(),
   z.object({ t: z.literal('setRole'), role: z.enum(['player', 'spectator']) }).strict(),
   z.object({ t: z.literal('setTurnTimer'), seconds: z.number().int().min(15).max(180) }).strict(),
+  z.object({ t: z.literal('pause') }).strict(),
+  z.object({ t: z.literal('resume') }).strict(),
   z.object({ t: z.literal('start') }).strict(),
   z.object({ t: z.literal('place'), cardId: cardIdSchema, slot: slotSchema }).strict(),
   z.object({ t: z.literal('toHand'), slot: slotSchema }).strict(),
@@ -33,7 +35,10 @@ export const ClientMsgSchema = z.discriminatedUnion('t', [
 
 export const CreateRoomSchema = z.object({
   name: nameSchema,
-  turnstileToken: z.string().min(1).max(4096)
+  // Optional on the wire: the client omits it when Turnstile is not configured.
+  // The Worker still rejects a missing token whenever a secret is set.
+  turnstileToken: z.string().max(4096).optional(),
+  roomCode: z.string().regex(/^[A-Z0-9]{4,6}$/).optional()
 }).strict();
 
 const NormalCardSchema = z.object({
@@ -61,8 +66,7 @@ const PublicPlayerSchema = z.object({
   name: nameSchema,
   connected: z.boolean(),
   away: z.boolean(),
-  table: z.array(PublicSlotSchema),
-  handCount: z.number().int().nonnegative()
+  table: z.array(PublicSlotSchema)
 }).strict();
 
 const PublicSpectatorSchema = z.object({
@@ -77,12 +81,18 @@ const PublicInterruptSchema = z.object({
   actorId: playerIdSchema,
   targetId: playerIdSchema,
   targetCardId: cardIdSchema,
-  endsAt: z.number().int()
+  // `null` while the game is paused (see pauseRemaining.interrupt).
+  endsAt: z.number().int().nullable()
 }).strict();
 
 const LastInterruptResultSchema = z.object({
   kind: z.enum(['CONCEAL', 'STEAL', 'REVEAL']),
   outcome: z.enum(['appealed', 'resolved', 'expired'])
+}).strict();
+
+const PauseRemainingSchema = z.object({
+  turn: z.number().int().nonnegative().nullable(),
+  interrupt: z.number().int().nonnegative().nullable()
 }).strict();
 
 const PublicViewSchema = z.object({
@@ -97,15 +107,16 @@ const PublicViewSchema = z.object({
   turnRemainingMs: z.number().int().nonnegative().nullable(),
   turnDurationSeconds: z.number().int().min(15).max(180),
   turnNumber: z.number().int().nonnegative(),
+  paused: z.boolean(),
+  pauseRemaining: PauseRemainingSchema.nullable(),
   interrupt: PublicInterruptSchema.nullable(),
   lastInterruptResult: LastInterruptResultSchema.nullable(),
   deckCount: z.number().int().nonnegative(),
-  discardCount: z.number().int().nonnegative(),
   winnerId: playerIdSchema.nullable(),
+  winningSets: z.array(z.array(cardIdSchema)).nullable(),
   reveal: z.object({
     players: z.record(z.string(), z.object({ table: z.array(CardSchema), hand: z.array(CardSchema) })),
-    deck: z.array(CardSchema),
-    discardPile: z.array(CardSchema)
+    deck: z.array(CardSchema)
   }).optional()
 }).strict();
 

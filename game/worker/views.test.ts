@@ -23,6 +23,27 @@ function startedRoom(): RoomState {
   return started.state;
 }
 
+function pausedInterruptRoom(): RoomState {
+  const room = startedRoom();
+  const active = room.players.find((player) => player.id === room.activePlayerId);
+  const opponent = room.players.find((player) => player.id !== room.activePlayerId);
+  if (!active || !opponent) throw new Error('Expected two players');
+  active.hand.push({ id: 'conceal-action', kind: 'action', action: 'CONCEAL' });
+  active.table[0].revealed = true;
+  opponent.hand.push({ id: 'appeal', kind: 'action', action: 'APPEAL' });
+  const action = reduceRoom(room, active.id, {
+    t: 'action',
+    cardId: 'conceal-action',
+    kind: 'CONCEAL',
+    targetId: active.id,
+    slot: 0
+  }, 10_000);
+  if ('error' in action) throw new Error(action.error);
+  const paused = reduceRoom(action.state, room.hostId, { t: 'pause' }, 20_000);
+  if ('error' in paused) throw new Error(paused.error);
+  return paused.state;
+}
+
 describe('filtered room views', () => {
   it('gives spectators exactly the same public information opponents receive', () => {
     const room = startedRoom();
@@ -65,5 +86,22 @@ describe('filtered room views', () => {
     if (view.role !== 'spectator') throw new Error('Expected spectator view');
     expect(view.data.reveal?.players[room.players[0].id].table).toHaveLength(3);
     expect(view.data.players[0].table.every((slot) => slot.state === 'revealed')).toBe(true);
+  });
+
+  it('carries no live interrupt deadline while the game is paused', () => {
+    const room = pausedInterruptRoom();
+    const snapshot = playerView(room, room.hostId);
+    expect(snapshot.data.paused).toBe(true);
+    // Only the frozen remaining time survives; the deadline itself is gone.
+    expect(snapshot.data.pauseRemaining?.interrupt).toBe(20_000);
+    expect(snapshot.data.interrupt?.endsAt).toBeNull();
+
+    const spectator = spectatorView(room);
+    expect(spectator.data.interrupt?.endsAt).toBeNull();
+
+    // A client must never see a stale numeric deadline (e.g. 0 = "expired").
+    const serialized = JSON.parse(JSON.stringify(snapshot)) as { data: { interrupt: { endsAt: unknown } } };
+    expect(serialized.data.interrupt.endsAt).toBeNull();
+    expect(JSON.stringify(snapshot)).not.toContain('"endsAt":0');
   });
 });

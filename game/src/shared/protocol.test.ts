@@ -37,8 +37,7 @@ describe('validated room protocol', () => {
         name: 'Alice',
         connected: true,
         away: false,
-        table: [{ state: 'concealed', cardId: 'opaque-random-card-id' }],
-        handCount: 2
+        table: [{ state: 'concealed', cardId: 'opaque-random-card-id' }]
       }],
       spectators: [],
       spectatorCount: 0,
@@ -47,11 +46,13 @@ describe('validated room protocol', () => {
       turnRemainingMs: null,
       turnDurationSeconds: 60,
       turnNumber: 0,
+      paused: false,
+      pauseRemaining: null,
       interrupt: null,
       lastInterruptResult: null,
       deckCount: 0,
-      discardCount: 0,
-      winnerId: null
+      winnerId: null,
+      winningSets: null
     };
     expect(ViewSchema.safeParse({
       role: 'spectator',

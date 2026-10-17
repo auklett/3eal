@@ -41,7 +41,7 @@ export default function RulesOverlay({ onClose }: RulesOverlayProps) {
           </section>
           <section>
             <h3 className="mb-2 text-xl font-bold">Zones and privacy</h3>
-            <p>Your Table starts with three concealed Normal/TEAL cards. Your Hand is private and has no size limit. Public views show everyone’s hand size, never its contents. Players see their own concealed cards; spectators receive exactly the same public view as opponents.</p>
+            <p>Your Table starts with three concealed Normal/TEAL cards. Your Hand is private and has no size limit. You see only your own hand count — never another player’s. A small eye badge marks the cards that are revealed to everyone. Players see their own concealed cards; spectators receive exactly the same public view as opponents.</p>
             <p className="mt-2">Stealing preserves whether a card is concealed or revealed. The thief sees the stolen card in their private view. Everyone sees all cards after the game ends. There is no chat.</p>
           </section>
           <section>
@@ -50,10 +50,10 @@ export default function RulesOverlay({ onClose }: RulesOverlayProps) {
             <ol className="mt-2 list-inside list-decimal space-y-2">
               <li>Draw one card into your Hand at turn start.</li>
               <li>During Main, move Normal/TEAL cards from Hand to an open Table slot; with nine Table cards, swap with a selected Table card.</li>
-              <li>You may move Table cards to Hand for discard, play actions, and end your turn. Unplayed APPEAL cards stay in Hand between turns; other cards are discarded.</li>
+              <li>You may move Table cards to Hand, play actions, and end your turn. Unplayed APPEAL cards stay in Hand between turns; all other Hand and moved Table cards are shuffled straight back into the deck at end of turn.</li>
               <li>If a STEAL leaves more than nine cards on your Table, move extras to Hand before ending. A timed-out turn ends automatically.</li>
             </ol>
-            <p className="mt-2">Turns default to 60 seconds. The host can set 15–180 seconds in the lobby. The turn timer pauses during an interrupt.</p>
+            <p className="mt-2">Turns default to 60 seconds. The host can set 15–180 seconds in the lobby. The turn timer pauses during an interrupt. The host can also pause and resume at any time during play, which freezes every timer until play resumes.</p>
           </section>
           <section>
             <h3 className="mb-2 text-xl font-bold">Actions and interrupts</h3>
@@ -61,7 +61,7 @@ export default function RulesOverlay({ onClose }: RulesOverlayProps) {
               <li><strong>CONCEAL:</strong> hide one of your revealed Table cards. Any opponent may APPEAL.</li>
               <li><strong>STEAL:</strong> take a Normal/TEAL card from an opponent’s Table; concealed cards are chosen blindly. Only the target may APPEAL.</li>
               <li><strong>REVEAL:</strong> reveal a concealed card on an opponent’s Table, chosen blindly. Only the target may APPEAL.</li>
-              <li><strong>APPEAL:</strong> cancel CONCEAL, STEAL, or REVEAL and discard both action cards. APPEAL cannot be appealed.</li>
+              <li><strong>APPEAL:</strong> cancel CONCEAL, STEAL, or REVEAL; both action cards are shuffled straight back into the deck. APPEAL cannot be appealed.</li>
             </ul>
             <p className="mt-2">An interrupt lasts at most 30 seconds and ends immediately on the first APPEAL, when all APPEAL holders pass, or when time expires. Players without APPEAL pass automatically. REVEAL with no concealed target card is rejected without consuming the action.</p>
           </section>

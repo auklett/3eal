@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import HomePage from './pages/HomePage';
 import RulesOverlay from './components/game/RulesOverlay';
+import { requestRoomCreation } from './logic/createRoom';
 import './App.css';
 
 const WorkerGameBoard = lazy(() => import('./pages/WorkerGameBoard'));
@@ -98,26 +99,7 @@ function App() {
       <HomePage
         onJoinRoom={handleOpenLobby}
         useTurnstile
-        onCreateRoom={async (name, turnstileToken) => {
-          const response = await fetch('/api/rooms', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, turnstileToken })
-          });
-          const payload: unknown = await response.json();
-          if (!response.ok) {
-            const message = typeof payload === 'object' && payload !== null && 'error' in payload
-              ? String(payload.error)
-              : 'Unable to create a room.';
-            throw new Error(message);
-          }
-          if (typeof payload !== 'object' || payload === null
-            || !('roomCode' in payload) || typeof payload.roomCode !== 'string'
-            || !('sessionId' in payload) || typeof payload.sessionId !== 'string') {
-            throw new Error('The room service returned an invalid response.');
-          }
-          return { roomCode: payload.roomCode, sessionId: payload.sessionId };
-        }}
+        onCreateRoom={async (name, turnstileToken, code) => requestRoomCreation(name, turnstileToken, code)}
         onRules={() => setShowRules(true)}
       />
       {showRules && <RulesOverlay onClose={() => setShowRules(false)} />}

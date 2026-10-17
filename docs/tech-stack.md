@@ -19,8 +19,10 @@ game/
 ├── packages/engine/src/     # seeded pure rules, deck, partitions, room reducer
 ├── src/shared/protocol.ts   # Zod-validated client/server messages and filtered views
 ├── src/hooks/useRoom.ts     # reconnecting WebSocket client and optimistic state
+├── src/logic/createRoom.ts  # room-code validation, exists probe, atomic create-with-code
+├── src/logic/tableLayout.ts # local-only Table rearrangement merge/move helpers
 ├── src/pages/               # Home, Worker lobby, Worker game board
-├── worker/index.ts          # same-origin API/static-assets routing and room creation
+├── worker/index.ts          # same-origin API/static-assets routing, room existence, and room creation
 ├── worker/gameRoom.ts       # SQLite persistence, Hibernation API, alarms, views
 ├── worker/views.ts          # per-socket privacy filtering
 ├── wrangler.toml            # Worker, assets, Turnstile vars, first SQLite migration
@@ -31,15 +33,19 @@ game/
 
 Each room's Durable Object stores the shuffled deck, hands, Tables, action/interrupt state, seats, and rejoin requests in one SQLite row. A validated action reduces the pure room state, persists it, advances the earliest alarm, and broadcasts full snapshots. The Worker never serializes the seed, deck order, opponents' hands, or concealed card identities into public views. Players receive only their own hand and concealed cards in a separate private field. Spectators receive the same public snapshot as opponents.
 
-Card IDs are seeded-random 128-bit values, independent of card descriptions. The deck seed comes from the Worker and stays in Durable Object state. At game end the public snapshot reveals all cards.
+Card IDs are seeded-random 128-bit values, independent of card descriptions. The deck seed comes from the Worker and stays in Durable Object state. At game end the public snapshot reveals all cards and adds the three winning sets (the valid partition the engine found), so every client can render the same Game Over grouping.
+
+Room lookup and creation are separate concerns. `GET /api/rooms/:code/exists` instantiates the Durable Object to answer without writing any state (a missing room must not be created by a mere lookup). `POST /api/rooms` optionally accepts a caller-supplied `roomCode`; creation is a single atomic step that returns `409` if that code is already taken, so a player who typed a code never races another creator.
 
 ## Timers and lifecycle
 
 - Interrupts last at most 30 seconds and end on the first APPEAL, all APPEAL holders passing, or expiry.
 - The 60-second default turn timer pauses during an interrupt; the host sets 15–180 seconds in the lobby.
+- The host may pause and resume at any time during play by sending the `pause` / `resume` messages. Pausing stores each timer's remaining time and freezes every server deadline (turn, interrupt, away, and rejoin-request); no game action is accepted until the host resumes, at which point each deadline is recomputed as `now + remaining` and the alarm is reset to the earliest.
 - A disconnected seat is retained; after 60 seconds away its current/future turns are skipped.
+- The persisted row schema supplies Zod defaults for fields added after the first release (`paused` → `false`, `pauseRemaining` → `null`, `winningSets` → `null`), so rooms persisted before those features still load.
 - Host approval is required for a new session to reclaim a player seat. Pending requesters receive no view before approval.
-- The room's single alarm is always set to the earliest interrupt, turn, away, or rejoin-request deadline. Server timers do not use `setTimeout`.
+- The room's single alarm is always set to the earliest interrupt, turn, away, or rejoin-request deadline — except while paused, when there is no pending deadline and no alarm is scheduled. Server timers do not use `setTimeout`.
 
 ## Free-tier operation
 

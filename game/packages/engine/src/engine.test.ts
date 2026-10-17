@@ -114,6 +114,36 @@ describe('sets and win partitions', () => {
       expect(hasWon(identified)).toBe(independentWinCheck(identified));
     }), { numRuns: 250 });
   });
+
+  it('returns deterministic, disjoint, complete and valid groups for every winning table', () => {
+    const colorArb = fc.constantFrom(...COLORS);
+    const shapeArb = fc.constantFrom('circle', 'triangle', 'square', 'pentagon', 'hexagon');
+    const cardArb = fc.oneof(
+      fc.record({
+        kind: fc.constant<'normal'>('normal'),
+        color: colorArb,
+        number: fc.constantFrom(...NUMBERS),
+        shape: shapeArb
+      }),
+      fc.constant({ kind: 'teal' as const })
+    );
+    fc.assert(fc.property(fc.array(cardArb, { minLength: 9, maxLength: 9 }), (cards) => {
+      const identified = cards.map((card, index) => ({ ...card, id: `card-${index}` })) as Card[];
+      const partition = findWinningPartition(identified);
+      expect(partition !== null).toBe(hasWon(identified));
+      if (!partition) return;
+
+      // Deterministic: identical input yields the identical grouping.
+      expect(findWinningPartition(identified.map((card) => ({ ...card }))))
+        .toEqual(partition.map((set) => set.map((card) => ({ ...card }))));
+
+      expect(partition).toHaveLength(3);
+      for (const set of partition) expect(isValidSet(set)).toBe(true);
+      const ids = partition.flat().map((card) => card.id);
+      expect(new Set(ids).size).toBe(9);
+      expect(new Set(ids)).toEqual(new Set(identified.map((card) => card.id)));
+    }), { numRuns: 300 });
+  });
 });
 
 describe('interrupt transitions', () => {
@@ -125,7 +155,8 @@ describe('interrupt transitions', () => {
     expect(result.status).toBe('open');
     if (result.status !== 'open') return;
     expect(result.interrupt.endsAt).toBe(1000 + MAX_INTERRUPT_DURATION_MS);
-    expect(expireInterrupt(result.interrupt, result.interrupt.endsAt)).toEqual({ status: 'resolved', reason: 'all-passed' });
+    const endsAt = result.interrupt.endsAt ?? 0;
+    expect(expireInterrupt(result.interrupt, endsAt)).toEqual({ status: 'resolved', reason: 'all-passed' });
   });
 
   it('auto-resolves when no eligible player holds APPEAL', () => {

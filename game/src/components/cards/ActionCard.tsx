@@ -1,4 +1,5 @@
 import type { Card } from '../../types';
+import { selectionRingColor } from '../../logic/cardGlow';
 
 interface ActionCardProps {
   card: Card;
@@ -14,7 +15,7 @@ export default function ActionCard({ card, onClick, isSelectable = false, isSele
   const isGlowing = isSelected || isDragging;
   const backgroundColor = '#FFFFFF';
   const textColor = '#000000';
-  const glowColor = '#008080';
+  const glowColor = selectionRingColor('ACTION');
 
   return (
     <div
@@ -29,7 +30,6 @@ export default function ActionCard({ card, onClick, isSelectable = false, isSele
         px-1.5 py-2
         transition-all
         ${isSelectable ? 'cursor-pointer hover:scale-105 hover:shadow-xl' : ''}
-        ${isGlowing ? 'ring-4' : ''}
       `}
       style={{ backgroundColor, borderRadius: '12px', border: '1px solid #D4D4D4', ...(isGlowing ? { boxShadow: `0 0 0 4px ${glowColor}` } : {}) }}
     >

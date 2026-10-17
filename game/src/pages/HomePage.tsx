@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import TurnstileWidget from '../components/TurnstileWidget';
+import { normalizeRoomCode, roomExists, ROOM_CODE_PATTERN } from '../logic/createRoom';
 
 interface HomePageProps {
   onJoinRoom: (roomCode: string) => void;
-  onCreateRoom: (name: string, turnstileToken: string) => Promise<{ roomCode: string; sessionId?: string }>;
+  onCreateRoom: (name: string, turnstileToken: string, roomCode?: string) => Promise<{ roomCode: string; sessionId?: string }>;
   onRules: () => void;
   useTurnstile?: boolean;
 }
@@ -22,6 +23,9 @@ export default function HomePage({ onJoinRoom, onCreateRoom, onRules, useTurnsti
   const [turnstileError, setTurnstileError] = useState('');
   const [error, setError] = useState('');
   const [isCreating, setIsCreating] = useState(false);
+  const [isChecking, setIsChecking] = useState(false);
+  const [missingCode, setMissingCode] = useState<string | null>(null);
+  const roomInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!useTurnstile) return;
@@ -58,25 +62,66 @@ export default function HomePage({ onJoinRoom, onCreateRoom, onRules, useTurnsti
       });
   }, [useTurnstile]);
 
-  const handleJoin = () => {
-    const normalizedCode = roomCode.trim().toUpperCase();
-    if (!/^[A-Z0-9]{4,6}$/.test(normalizedCode)) {
+  const handleJoin = async () => {
+    const normalizedCode = normalizeRoomCode(roomCode);
+    if (!ROOM_CODE_PATTERN.test(normalizedCode)) {
+      setMissingCode(null);
       setError('Enter a room code containing 4–6 letters or numbers.');
       return;
     }
+    setIsChecking(true);
     setError('');
-    onJoinRoom(normalizedCode);
+    setMissingCode(null);
+    try {
+      const exists = await roomExists(normalizedCode);
+      if (exists) {
+        onJoinRoom(normalizedCode);
+        return;
+      }
+      setRoomCode(normalizedCode);
+      setMissingCode(normalizedCode);
+    } catch {
+      setError('Could not reach the room service. Check your connection and try again.');
+    } finally {
+      setIsChecking(false);
+    }
+  };
+
+  const handleChangeCode = () => {
+    setMissingCode(null);
+    setError('');
+    setRoomCode('');
+    roomInput.current?.focus();
+  };
+
+  const handleCreateWithCode = async () => {
+    if (!missingCode) return;
+    const storedName = sessionStorage.getItem('3eal-player-name') || 'Player 1';
+    setIsCreating(true);
+    setError('');
+    try {
+      if (turnstileSiteKey && !turnstileToken) throw new Error('Complete the verification before creating a room.');
+      const created = await onCreateRoom(storedName, turnstileToken, missingCode);
+      if (created.sessionId) sessionStorage.setItem(`3eal-session:${created.roomCode}`, created.sessionId);
+      onJoinRoom(created.roomCode);
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : 'Unable to create a room.');
+    } finally {
+      setIsCreating(false);
+      setTurnstileToken('');
+      setTurnstileResetKey((key) => key + 1);
+    }
   };
 
   const handleCreateRoom = async () => {
     setIsCreating(true);
     setError('');
+    setMissingCode(null);
     try {
       console.log('HandleCreateRoom called with:', { turnstileToken: turnstileToken.substring(0, 20) + '...', turnstileSiteKey: !!turnstileSiteKey });
       // Use the stored player name from sessionStorage, or default to 'Player 1'
       const storedName = sessionStorage.getItem('3eal-player-name') || 'Player 1';
-      if (useTurnstile && !turnstileToken) throw new Error('Complete the verification before creating a room.');
-      if (useTurnstile && (!turnstileToken || !turnstileSiteKey)) throw new Error('Missing Turnstile configuration or token.');
+      if (turnstileSiteKey && !turnstileToken) throw new Error('Complete the verification before creating a room.');
       console.log('Calling onCreateRoom with name:', storedName, 'and token length:', turnstileToken.length);
       const created = await onCreateRoom(storedName, turnstileToken);
       if (created.sessionId) sessionStorage.setItem(`3eal-session:${created.roomCode}`, created.sessionId);
@@ -133,9 +178,13 @@ export default function HomePage({ onJoinRoom, onCreateRoom, onRules, useTurnsti
             <label className="block">
               <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-white/60">Room Code</span>
               <input
+                ref={roomInput}
                 value={roomCode}
-                onChange={(event) => setRoomCode(event.target.value.replace(/[^a-z\d]/gi, '').slice(0, 6))}
-                onKeyDown={(event) => event.key === 'Enter' && handleJoin()}
+                onChange={(event) => {
+                  setRoomCode(event.target.value.replace(/[^A-Z0-9]/gi, '').slice(0, 6).toUpperCase());
+                  if (missingCode) setMissingCode(null);
+                }}
+                onKeyDown={(event) => event.key === 'Enter' && void handleJoin()}
                 autoComplete="off"
                 aria-label="Room Code"
                 aria-invalid={Boolean(error)}
@@ -148,11 +197,38 @@ export default function HomePage({ onJoinRoom, onCreateRoom, onRules, useTurnsti
 
             <button
               type="button"
-              onClick={handleJoin}
-              className="min-h-14 w-full rounded-xl bg-white px-5 py-3 font-bold text-black shadow-[0_8px_30px_rgba(255,255,255,0.08)] transition duration-200 hover:-translate-y-0.5 hover:bg-teal-100 hover:shadow-[0_12px_32px_rgba(45,212,191,0.18)] active:translate-y-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-300"
+              onClick={() => void handleJoin()}
+              disabled={isChecking}
+              className="min-h-14 w-full rounded-xl bg-white px-5 py-3 font-bold text-black shadow-[0_8px_30px_rgba(255,255,255,0.08)] transition duration-200 hover:-translate-y-0.5 hover:bg-teal-100 hover:shadow-[0_12px_32px_rgba(45,212,191,0.18)] active:translate-y-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-300 disabled:cursor-wait disabled:opacity-60"
             >
-              Join Room
+              {isChecking ? 'Checking…' : 'Join Room'}
             </button>
+            {missingCode && (
+              <div
+                className="rounded-xl border border-amber-300/40 bg-amber-100/[0.06] p-3 text-sm text-amber-100"
+                role="alert"
+                aria-live="polite"
+              >
+                <p className="mb-2 text-center">No room <span className="font-mono font-semibold tracking-widest">{missingCode}</span> exists yet.</p>
+                <div className="space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleCreateWithCode()}
+                    disabled={isCreating}
+                    className="min-h-11 w-full rounded-lg border border-white/25 bg-white/[0.06] px-4 py-2 font-semibold text-white transition hover:border-teal-300/60 hover:bg-teal-300/[0.1] disabled:cursor-wait disabled:opacity-60"
+                  >
+                    {isCreating ? 'Creating…' : 'Create room with this code'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleChangeCode}
+                    className="min-h-11 w-full rounded-lg px-4 py-2 font-medium text-white/75 transition hover:bg-white/[0.06] hover:text-white"
+                  >
+                    Change the code
+                  </button>
+                </div>
+              </div>
+            )}
             <button
               type="button"
               onClick={() => void handleCreateRoom()}

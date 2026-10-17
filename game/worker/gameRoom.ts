@@ -46,6 +46,12 @@ export class GameRoom extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
     await this.ready;
     const url = new URL(request.url);
+    if (request.method === 'GET' && url.pathname === '/internal/exists') {
+      // Read-only probe: instantiating the object is unavoidable when
+      // addressing it by name, but no row is written and no state is created.
+      return Response.json({ exists: this.room !== null });
+    }
+
     if (request.method === 'POST' && url.pathname === '/internal/initialize') {
       if (this.room) return Response.json({ error: 'Room already exists' }, { status: 409 });
       const body = await readJson(request);
@@ -59,7 +65,7 @@ export class GameRoom extends DurableObject<Env> {
         parsed.data.seed
       );
       await this.commit();
-      return Response.json({ ok: true });
+      return Response.json({ ok: true, hostSessionId: parsed.data.hostSessionId });
     }
 
     if (request.method !== 'GET' || !url.pathname.endsWith('/ws') || request.headers.get('Upgrade') !== 'websocket') {
@@ -431,6 +437,8 @@ function toRoomIntent(message: ClientMsg): RoomIntent | null {
   switch (message.t) {
     case 'setRole':
     case 'setTurnTimer':
+    case 'pause':
+    case 'resume':
     case 'start':
     case 'place':
     case 'toHand':
