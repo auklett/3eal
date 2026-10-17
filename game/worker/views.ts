@@ -13,8 +13,7 @@ function publicPlayers(players: RoomPlayer[], phase: RoomState['phase']): Public
     away: player.away,
     table: player.table.map((slot) => slot.revealed || phase === 'finished'
       ? { state: 'revealed' as const, card: slot.card }
-      : { state: 'concealed' as const, cardId: slot.card.id }),
-    handCount: player.hand.length
+      : { state: 'concealed' as const, cardId: slot.card.id })
   }));
 }
 
@@ -31,11 +30,15 @@ export function publicView(room: RoomState): PublicView {
     turnRemainingMs: room.turnRemainingMs,
     turnDurationSeconds: room.turnDurationSeconds,
     turnNumber: room.turnNumber,
+    paused: room.paused,
+    pauseRemaining: room.pauseRemaining
+      ? { turn: room.pauseRemaining.turn, interrupt: room.pauseRemaining.interrupt }
+      : null,
     interrupt: publicInterrupt(room.pendingAction?.interrupt ?? null),
     lastInterruptResult: room.lastInterruptResult,
     deckCount: room.deck.length,
-    discardCount: room.discardPile.length,
-    winnerId: room.winnerId
+    winnerId: room.winnerId,
+    winningSets: room.winningSets
   };
   if (room.phase === 'finished') {
     view.reveal = {
@@ -46,8 +49,7 @@ export function publicView(room: RoomState): PublicView {
           hand: player.hand
         }
       ])),
-      deck: room.deck,
-      discardPile: room.discardPile
+      deck: room.deck
     };
   }
   return view;

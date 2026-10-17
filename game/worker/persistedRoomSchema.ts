@@ -27,7 +27,8 @@ const interruptSchema = z.object({
   actorId: z.string().uuid(),
   targetId: z.string().uuid(),
   targetCardId: z.string().min(1),
-  endsAt: z.number().int(),
+  // `null` while the host has the game paused: there is no live deadline then.
+  endsAt: z.number().int().nullable(),
   responderIds: z.array(z.string().uuid()),
   passedIds: z.array(z.string().uuid())
 }).strict();
@@ -58,7 +59,6 @@ export const persistedRoomSchema = z.object({
   }).strict()),
   turnDurationSeconds: z.number().int().min(15).max(180),
   deck: z.array(cardSchema),
-  discardPile: z.array(cardSchema),
   activePlayerId: z.string().uuid().nullable(),
   turnNumber: z.number().int().nonnegative(),
   turnEndsAt: z.number().int().nullable(),
@@ -72,6 +72,16 @@ export const persistedRoomSchema = z.object({
     outcome: z.enum(['appealed', 'resolved', 'expired'])
   }).strict().nullable(),
   winnerId: z.string().uuid().nullable(),
+  // Defaulted so rows persisted before the pause / winning-sets change still
+  // parse; they simply had none of these fields.
+  winningSets: z.array(z.array(z.string().min(1))).nullable().default(null),
+  paused: z.boolean().default(false),
+  pauseRemaining: z.object({
+    turn: z.number().int().nonnegative().nullable(),
+    interrupt: z.number().int().nonnegative().nullable(),
+    away: z.record(z.string(), z.number().int().nonnegative()),
+    rejoin: z.record(z.string(), z.number().int().nonnegative())
+  }).strict().nullable().default(null),
   randomSeed: z.string().min(1),
   randomCounter: z.number().int().nonnegative(),
   rejoinRequests: z.array(z.object({

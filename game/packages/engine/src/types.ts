@@ -42,7 +42,8 @@ export type InterruptActionIntent = {
 };
 
 export type InterruptState = InterruptActionIntent & {
-  endsAt: number;
+  /** Absolute deadline, or `null` while the host has the game paused. */
+  endsAt: number | null;
   responderIds: string[];
   passedIds: string[];
 };

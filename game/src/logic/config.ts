@@ -13,19 +13,14 @@ export const GAME_CONFIG = {
   wildCards: 3,
   actionCopies: 10,
   minPlayers: 2,
-  spectatorCap: 8,
-  turnDurationOptionsMs: [45_000, 75_000, 120_000],
-  defaultTurnDurationMs: 75_000,
+  minTurnDurationSeconds: 15,
+  maxTurnDurationSeconds: 180,
+  defaultTurnDurationSeconds: 60,
   interruptDurationMs: 30_000,
-  awayAfterMs: 45_000,
+  awayAfterMs: 60_000,
   heartbeatIntervalMs: 15_000,
   maxConsecutiveMissedTurns: 3,
-  hideOpponentHandCounts: true,
   pendingRejoinExpiryMs: 60_000
 } as const;
-
-export const MAX_STARTABLE_PLAYERS = Math.floor(
-  (GAME_CONFIG.colors.length * GAME_CONFIG.numbers.length * GAME_CONFIG.shapes.length + GAME_CONFIG.wildCards) / 3
-);
 
 export type ConfiguredCardColor = (typeof GAME_CONFIG.colors)[number];

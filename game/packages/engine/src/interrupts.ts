@@ -45,7 +45,7 @@ export function respondToInterrupt(
   response: 'appeal' | 'pass',
   now: number
 ): InterruptResponse {
-  if (now >= interrupt.endsAt) return { status: 'resolved', reason: 'all-passed' };
+  if (interrupt.endsAt !== null && now >= interrupt.endsAt) return { status: 'resolved', reason: 'all-passed' };
   if (!interrupt.responderIds.includes(playerId)) {
     throw new Error('Player is not eligible to respond to this interrupt');
   }
@@ -62,6 +62,6 @@ export function respondToInterrupt(
 }
 
 export function expireInterrupt(interrupt: InterruptState, now: number): InterruptResponse {
-  if (now < interrupt.endsAt) return { status: 'open', interrupt };
+  if (interrupt.endsAt === null || now < interrupt.endsAt) return { status: 'open', interrupt };
   return { status: 'resolved', reason: 'all-passed' };
 }

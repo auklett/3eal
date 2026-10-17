@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useRoom } from '../hooks/useRoom';
+import TurnstileWidget from '../components/TurnstileWidget';
+import { requestRoomCreation } from '../logic/createRoom';
 import type { View } from '../shared/protocol';
 
 interface WorkerLobbyPageProps {
@@ -22,6 +24,11 @@ export default function WorkerLobbyPage({ roomCode, onStartGame, onLeave }: Work
   const [newName, setNewName] = useState('');
   const [nameError, setNameError] = useState('');
   const [isChangingName, setIsChangingName] = useState(false);
+  const [turnstileSiteKey, setTurnstileSiteKey] = useState('');
+  const [turnstileToken, setTurnstileToken] = useState('');
+  const [turnstileResetKey, setTurnstileResetKey] = useState(0);
+  const [isCreatingLobby, setIsCreatingLobby] = useState(false);
+  const [createLobbyError, setCreateLobbyError] = useState('');
   const data = viewData(view);
   const currentId = view?.role === 'player' ? view.data.you.id : sessionStorage.getItem(`3eal-session:${roomCode}`);
   const isHost = Boolean(data && currentId && data.hostId === currentId);
@@ -62,6 +69,15 @@ export default function WorkerLobbyPage({ roomCode, onStartGame, onLeave }: Work
     }
   }, [view]);
 
+  useEffect(() => {
+    let cancelled = false;
+    void fetch('/api/config')
+      .then(async (response) => (response.ok ? response.json() : null) as Promise<{ turnstileSiteKey?: string } | null>)
+      .then((config) => { if (!cancelled && config?.turnstileSiteKey) setTurnstileSiteKey(config.turnstileSiteKey); })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
+
   const copyCode = () => {
     void navigator.clipboard.writeText(roomCode).catch(() => {
       clearError();
@@ -91,6 +107,52 @@ export default function WorkerLobbyPage({ roomCode, onStartGame, onLeave }: Work
     sessionStorage.removeItem(`3eal-session:${roomCode}`);
     window.location.reload();
   };
+
+  const createLobbyWithCode = async () => {
+    setIsCreatingLobby(true);
+    setCreateLobbyError('');
+    try {
+      const storedName = sessionStorage.getItem('3eal-player-name') || name || 'Player 1';
+      const created = await requestRoomCreation(storedName, turnstileToken, roomCode);
+      if (created.sessionId) sessionStorage.setItem(`3eal-session:${created.roomCode}`, created.sessionId);
+      window.location.assign(`/lobby/${created.roomCode}`);
+    } catch (createError) {
+      setCreateLobbyError(createError instanceof Error ? createError.message : 'Unable to create a room.');
+      setTurnstileToken('');
+      setTurnstileResetKey((key) => key + 1);
+    } finally {
+      setIsCreatingLobby(false);
+    }
+  };
+
+  if (status === 'notFound') {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-black p-6 text-center text-white">
+        <div className="max-w-md space-y-4">
+          <h1 className="text-3xl font-black tracking-widest">3EAL</h1>
+          <p className="text-lg font-semibold" role="alert">Room not found</p>
+          <p className="text-sm text-white/60">
+            Room <span className="font-mono tracking-widest">{roomCode}</span> does not exist yet.
+          </p>
+          <div className="space-y-2">
+            <button
+              type="button"
+              className="min-h-12 w-full rounded-xl border border-white/25 bg-white/[0.05] px-5 py-3 font-semibold transition hover:border-teal-300/60 hover:bg-teal-300/[0.08] disabled:cursor-wait disabled:opacity-60"
+              onClick={() => void createLobbyWithCode()}
+              disabled={isCreatingLobby}
+            >
+              {isCreatingLobby ? 'Creating…' : 'Create lobby using the entered code'}
+            </button>
+            <button type="button" className={buttonClass} onClick={onLeave}>Return home</button>
+          </div>
+          {turnstileSiteKey && (
+            <TurnstileWidget siteKey={turnstileSiteKey} resetKey={turnstileResetKey} onToken={setTurnstileToken} />
+          )}
+          {createLobbyError && <p className="text-sm text-rose-300" role="alert">{createLobbyError}</p>}
+        </div>
+      </main>
+    );
+  }
 
   if (!data) {
     return (

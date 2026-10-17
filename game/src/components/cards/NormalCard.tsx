@@ -1,5 +1,6 @@
 import type { Card } from '../../types';
 import { useEffect, useState } from 'react';
+import { selectionRingColor } from '../../logic/cardGlow';
 
 interface NormalCardProps {
   card: Card;
@@ -23,7 +24,7 @@ export default function NormalCard({ card, onClick, isSelectable = false, isSele
 
   const isGlowing = isSelected || isDragging;
   const backgroundColor = `#${card.color}`;
-  const glowColor = '#FFFFFF';
+  const glowColor = selectionRingColor(card.category, card.color);
   const colorInfo: Record<string, { name: string; glyph: string; pattern: string }> = {
     C0C0FF: { name: 'Lavender', glyph: 'L', pattern: 'repeating-linear-gradient(0deg, transparent 0 7px, #0008 7px 9px)' },
     '008080': { name: 'Teal', glyph: 'T', pattern: 'radial-gradient(#0009 1px, transparent 1.5px)' },
@@ -169,9 +170,8 @@ export default function NormalCard({ card, onClick, isSelectable = false, isSele
         shadow-md
         transition-all
         ${isSelectable ? 'cursor-pointer hover:scale-105 hover:shadow-xl' : ''}
-        ${isGlowing ? 'ring-4' : ''}
       `}
-      style={{ backgroundColor, borderRadius: '12px', ...(card.isRevealed ? { outline: '2px solid #FACC15', outlineOffset: '-2px' } : {}), ...(isGlowing ? { boxShadow: `0 0 0 4px ${glowColor}` } : {}) }}
+      style={{ backgroundColor, borderRadius: '12px', ...(isGlowing ? { boxShadow: `0 0 0 4px ${glowColor}` } : {}) }}
       aria-label={`${color.name} ${card.number} ${card.shape}${colorLabel}`}
     >
       {colorBlindMode && <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-0 opacity-50" style={{ backgroundImage: color.pattern, backgroundSize: card.color === '008080' ? '9px 9px' : undefined }} />}

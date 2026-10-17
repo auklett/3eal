@@ -31,16 +31,14 @@ function makeViews(): { alice: View; bob: View; spectator: View } {
         name: 'Alice',
         connected: true,
         away: false,
-        table: aliceTable.map((card) => ({ state: 'concealed' as const, cardId: card.id })),
-        handCount: 1
+        table: aliceTable.map((card) => ({ state: 'concealed' as const, cardId: card.id }))
       },
       {
         id: bobId,
         name: 'Bob',
         connected: true,
         away: false,
-        table: bobTable.map((card) => ({ state: 'concealed' as const, cardId: card.id })),
-        handCount: 1
+        table: bobTable.map((card) => ({ state: 'concealed' as const, cardId: card.id }))
       }
     ],
     spectators: [{ id: viewerId, name: 'Viewer', connected: true }],
@@ -50,11 +48,13 @@ function makeViews(): { alice: View; bob: View; spectator: View } {
     turnRemainingMs: null,
     turnDurationSeconds: 60,
     turnNumber: 1,
+    paused: false,
+    pauseRemaining: null,
     interrupt: null,
     lastInterruptResult: null,
     deckCount: 200,
-    discardCount: 0,
-    winnerId: null
+    winnerId: null,
+    winningSets: null
   };
 
   const aliceHand = { id: 'alice-private-hand-card', kind: 'normal' as const, color: 'grape' as const, number: 7 as const, shape: 'hexagon' as const };

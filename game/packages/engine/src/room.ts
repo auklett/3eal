@@ -44,6 +44,18 @@ export type LastInterruptResult = {
   outcome: 'appealed' | 'resolved' | 'expired';
 };
 
+/**
+ * Frozen countdowns captured while the host has the game paused. Absolute
+ * deadlines are cleared on pause so nothing can expire; resume recomputes each
+ * deadline as `now + remaining`.
+ */
+export type PauseRemaining = {
+  turn: number | null;
+  interrupt: number | null;
+  away: Record<string, number>;
+  rejoin: Record<string, number>;
+};
+
 export type RoomState = {
   roomCode: string;
   phase: 'lobby' | 'playing' | 'finished';
@@ -52,7 +64,6 @@ export type RoomState = {
   spectators: RoomSpectator[];
   turnDurationSeconds: number;
   deck: Card[];
-  discardPile: Card[];
   activePlayerId: string | null;
   turnNumber: number;
   turnEndsAt: number | null;
@@ -60,6 +71,10 @@ export type RoomState = {
   pendingAction: { actionCard: ActionCard; interrupt: InterruptState } | null;
   lastInterruptResult: LastInterruptResult | null;
   winnerId: string | null;
+  /** Card IDs for the three validated sets found at the winning turn, grouped 3×3. */
+  winningSets: string[][] | null;
+  paused: boolean;
+  pauseRemaining: PauseRemaining | null;
   randomSeed: string;
   randomCounter: number;
   rejoinRequests: RejoinRequest[];
@@ -69,6 +84,8 @@ export type RoomState = {
 export type RoomIntent =
   | { t: 'setRole'; role: 'player' | 'spectator' }
   | { t: 'setTurnTimer'; seconds: number }
+  | { t: 'pause' }
+  | { t: 'resume' }
   | { t: 'start' }
   | { t: 'place'; cardId: string; slot: number }
   | { t: 'toHand'; slot: number }
@@ -153,11 +170,13 @@ function setPublicResult(
   state.lastInterruptResult = { kind, outcome };
 }
 
+/** Discarded cards are shuffled straight back into the draw deck. */
+function discardToDeck(state: RoomState, cards: readonly Card[]): void {
+  if (cards.length === 0) return;
+  state.deck = shuffle([...state.deck, ...cards], randomFor(state));
+}
+
 function drawForTurn(state: RoomState): void {
-  if (state.deck.length === 0 && state.discardPile.length > 0) {
-    state.deck = shuffle(state.discardPile, randomFor(state));
-    state.discardPile = [];
-  }
   const card = state.deck.pop();
   const active = state.activePlayerId ? getPlayer(state, state.activePlayerId) : undefined;
   if (card && active) active.hand.push(card);
@@ -193,11 +212,11 @@ function finishTurn(state: RoomState, now: number): void {
   }
 
   const keptActionCards = active.hand.filter((card) => card.kind === 'action');
-  state.discardPile.push(...active.hand.filter((card) => card.kind !== 'action'));
+  discardToDeck(state, active.hand.filter((card) => card.kind !== 'action'));
   active.hand = keptActionCards;
   if (active.table.length > 9) {
     const removed = active.table.splice(9);
-    state.discardPile.push(...removed.map((slot) => slot.card));
+    discardToDeck(state, removed.map((slot) => slot.card));
   }
 
   const winningPartition = active.table.length === 9
@@ -206,6 +225,7 @@ function finishTurn(state: RoomState, now: number): void {
   if (winningPartition) {
     state.phase = 'finished';
     state.winnerId = active.id;
+    state.winningSets = winningPartition.map((set) => set.map((card) => card.id));
     state.turnEndsAt = null;
     state.turnRemainingMs = null;
     state.pendingAction = null;
@@ -232,7 +252,7 @@ function resolvePendingAction(
   const target = getPlayer(state, action.targetId);
   if (outcome === 'appealed') {
     if (!appealedCard) throw new Error('An appealed interrupt requires an APPEAL card');
-    state.discardPile.push(pending.actionCard, appealedCard);
+    discardToDeck(state, [pending.actionCard, appealedCard]);
   } else {
     const targetSlotIndex = target?.table.findIndex((slot) => slot.card.id === action.targetCardId) ?? -1;
     const targetSlot = target?.table[targetSlotIndex];
@@ -246,7 +266,7 @@ function resolvePendingAction(
       target.table.splice(targetSlotIndex, 1);
       actor.table.push(targetSlot);
     }
-    state.discardPile.push(pending.actionCard);
+    discardToDeck(state, [pending.actionCard]);
   }
 
   setPublicResult(state, action.kind, outcome);
@@ -298,7 +318,6 @@ export function createRoom(roomCode: string, hostId: string, hostSessionId: stri
     spectators: [],
     turnDurationSeconds: DEFAULT_TURN_SECONDS,
     deck: [],
-    discardPile: [],
     activePlayerId: null,
     turnNumber: 0,
     turnEndsAt: null,
@@ -306,6 +325,9 @@ export function createRoom(roomCode: string, hostId: string, hostSessionId: stri
     pendingAction: null,
     lastInterruptResult: null,
     winnerId: null,
+    winningSets: null,
+    paused: false,
+    pauseRemaining: null,
     randomSeed,
     randomCounter: 0,
     rejoinRequests: [],
@@ -426,7 +448,7 @@ export function resolveRejoinRequest(
     player.sessionIds = [request.requesterId];
     player.away = false;
     player.awayAt = null;
-    if (next.phase === 'playing' && next.activePlayerId === null) beginTurn(next, player.id, now);
+    if (next.phase === 'playing' && next.activePlayerId === null && !next.paused) beginTurn(next, player.id, now);
     return {
       result: { state: next },
       acceptedPlayerId: player.id,
@@ -473,9 +495,11 @@ function startGame(state: RoomState, now: number): string | undefined {
   }
   deck.push(...skippedActions);
   state.deck = shuffle(deck, randomFor(state));
-  state.discardPile = [];
   state.phase = 'playing';
   state.winnerId = null;
+  state.winningSets = null;
+  state.paused = false;
+  state.pauseRemaining = null;
   state.turnNumber = 0;
   state.lastInterruptResult = null;
   state.skipAfterInterrupt = false;
@@ -567,6 +591,63 @@ function doAction(
   return undefined;
 }
 
+/**
+ * Freezes every server deadline. Absolute timestamps are cleared (or set to a
+ * sentinel for the interrupt, whose schema requires a number) and each
+ * remaining duration is captured so resume can rebuild `now + remaining`.
+ */
+function pauseGame(state: RoomState, now: number): void {
+  const remaining: PauseRemaining = {
+    turn: state.turnEndsAt !== null ? Math.max(0, state.turnEndsAt - now) : state.turnRemainingMs,
+    interrupt: state.pendingAction && state.pendingAction.interrupt.endsAt !== null
+      ? Math.max(0, state.pendingAction.interrupt.endsAt - now)
+      : null,
+    away: {},
+    rejoin: {}
+  };
+  for (const player of state.players) {
+    if (player.awayAt !== null) remaining.away[player.id] = Math.max(0, player.awayAt - now);
+    player.awayAt = null;
+  }
+  for (const request of state.rejoinRequests) {
+    remaining.rejoin[request.id] = Math.max(0, request.expiresAt - now);
+  }
+  state.paused = true;
+  state.pauseRemaining = remaining;
+  state.turnEndsAt = null;
+  state.turnRemainingMs = remaining.turn;
+  if (state.pendingAction) {
+    // No absolute deadline while paused; the frozen remaining time lives in
+    // `pauseRemaining.interrupt` until resume re-arms it.
+    state.pendingAction.interrupt = { ...state.pendingAction.interrupt, endsAt: null };
+  }
+}
+
+/** Re-arms every previously frozen deadline as `now + remaining`. */
+function resumeGame(state: RoomState, now: number): void {
+  const remaining = state.pauseRemaining;
+  for (const player of state.players) {
+    const away = remaining?.away[player.id];
+    player.awayAt = away === undefined ? null : now + away;
+  }
+  for (const request of state.rejoinRequests) {
+    const left = remaining?.rejoin[request.id];
+    if (left !== undefined) request.expiresAt = now + left;
+  }
+  if (state.pendingAction && remaining?.interrupt !== null && remaining?.interrupt !== undefined) {
+    state.pendingAction.interrupt = { ...state.pendingAction.interrupt, endsAt: now + remaining.interrupt };
+  }
+  if (state.activePlayerId !== null) {
+    state.turnEndsAt = now + (remaining?.turn ?? state.turnDurationSeconds * 1000);
+    state.turnRemainingMs = null;
+  } else {
+    state.turnEndsAt = null;
+    state.turnRemainingMs = remaining?.turn ?? null;
+  }
+  state.paused = false;
+  state.pauseRemaining = null;
+}
+
 export function reduceRoom(state: RoomState, actorId: string, intent: RoomIntent, now: number): ReduceResult {
   const actor = getParticipant(state, actorId);
   if (!actor) return { state, error: 'You are not a member of this room' };
@@ -592,6 +673,21 @@ export function reduceRoom(state: RoomState, actorId: string, intent: RoomIntent
     return error ? { state, error } : { state: next };
   }
 
+  if (intent.t === 'pause') {
+    if (actorId !== state.hostId) return { state, error: 'Only the host can pause the game' };
+    if (state.phase !== 'playing') return { state, error: 'The game can only be paused during play' };
+    if (state.paused) return { state, error: 'The game is already paused' };
+    pauseGame(next, now);
+    return { state: next };
+  }
+
+  if (intent.t === 'resume') {
+    if (actorId !== state.hostId) return { state, error: 'Only the host can resume the game' };
+    if (!state.paused) return { state, error: 'The game is not paused' };
+    resumeGame(next, now);
+    return { state: next };
+  }
+
   if (intent.t === 'rematch') {
     if (actorId !== state.hostId || state.phase !== 'finished') {
       return { state, error: 'Only the host can start a rematch after the game ends' };
@@ -600,7 +696,6 @@ export function reduceRoom(state: RoomState, actorId: string, intent: RoomIntent
     if (next.players.length < 2) return { state, error: 'At least two connected players are required for a rematch' };
     next.phase = 'lobby';
     next.deck = [];
-    next.discardPile = [];
     next.activePlayerId = null;
     next.turnNumber = 0;
     next.turnEndsAt = null;
@@ -608,6 +703,9 @@ export function reduceRoom(state: RoomState, actorId: string, intent: RoomIntent
     next.pendingAction = null;
     next.lastInterruptResult = null;
     next.winnerId = null;
+    next.winningSets = null;
+    next.paused = false;
+    next.pauseRemaining = null;
     next.rejoinRequests = [];
     for (const player of next.players) {
       player.table = [];
@@ -618,16 +716,19 @@ export function reduceRoom(state: RoomState, actorId: string, intent: RoomIntent
     return { state: next };
   }
 
+  if (next.paused) return { state, error: 'Game is paused' };
+
   if (intent.t === 'endTurn') {
     if (!currentMainPlayer(state, actorId)) return { state, error: 'Only the active player can end their Main phase' };
     finishTurn(next, now);
     return { state: next };
   }
 
+
   if (intent.t === 'appeal' || intent.t === 'pass') {
     const pending = state.pendingAction;
     if (!pending) return { state, error: 'There is no interrupt to respond to' };
-    if (now >= pending.interrupt.endsAt) return { state, error: 'The interrupt window has ended' };
+    if (pending.interrupt.endsAt !== null && now >= pending.interrupt.endsAt) return { state, error: 'The interrupt window has ended' };
     if (!pending.interrupt.responderIds.includes(actorId)) {
       return { state, error: 'You are not eligible to respond to this interrupt' };
     }
@@ -703,10 +804,19 @@ export function setParticipantConnected(state: RoomState, participantId: string,
   const player = getPlayer(next, participantId);
   if (player) {
     player.connected = connected;
-    player.awayAt = connected ? null : now + AWAY_AFTER_MS;
-    if (connected) player.away = false;
+    if (connected) {
+      player.away = false;
+      player.awayAt = null;
+      if (next.pauseRemaining) delete next.pauseRemaining.away[participantId];
+    } else if (next.paused) {
+      // Frozen: start this seat's away clock only once the host resumes.
+      player.awayAt = null;
+      if (next.pauseRemaining) next.pauseRemaining.away[participantId] = AWAY_AFTER_MS;
+    } else {
+      player.awayAt = now + AWAY_AFTER_MS;
+    }
     if (!connected && participantId === next.hostId) transferHost(next);
-    if (connected && next.phase === 'playing' && next.activePlayerId === null && !player.away && !player.kicked) {
+    if (connected && next.phase === 'playing' && next.activePlayerId === null && !next.paused && !player.away && !player.kicked) {
       beginTurn(next, player.id, now);
     }
   } else {
@@ -736,7 +846,7 @@ export function kickParticipant(state: RoomState, actorId: string, targetId: str
     player.kicked = true;
     if (next.activePlayerId === targetId) {
       if (next.pendingAction) next.skipAfterInterrupt = true;
-      else finishTurn(next, now);
+      else if (!next.paused) finishTurn(next, now);
     }
   }
   return { state: next };
@@ -744,13 +854,14 @@ export function kickParticipant(state: RoomState, actorId: string, targetId: str
 
 function resolveExpiredPendingAction(state: RoomState, now: number): void {
   const pending = state.pendingAction;
-  if (!pending || now < pending.interrupt.endsAt) return;
+  if (!pending || pending.interrupt.endsAt === null || now < pending.interrupt.endsAt) return;
   const expired = expireInterrupt(pending.interrupt, now);
   if (expired.status !== 'resolved') return;
   resolvePendingAction(state, 'expired', now);
 }
 
 export function processDeadlines(state: RoomState, now: number): DeadlineResult {
+  if (state.paused) return { state, expiredRejoinIds: [] };
   const next = structuredClone(state);
   const expiredRejoinIds = next.rejoinRequests
     .filter((request) => request.expiresAt <= now)
@@ -784,6 +895,7 @@ export function processDeadlines(state: RoomState, now: number): DeadlineResult 
 }
 
 export function nextRoomDeadline(state: RoomState): number | null {
+  if (state.paused) return null;
   const deadlines = [
     state.turnEndsAt,
     state.pendingAction?.interrupt.endsAt,
