@@ -1,6 +1,7 @@
 import type { Card } from '../../types';
 import { useEffect, useState } from 'react';
 import { selectionRingColor } from '../../logic/cardGlow';
+import { cardDims, type CardSize } from './cardSize';
 
 interface NormalCardProps {
   card: Card;
@@ -8,9 +9,17 @@ interface NormalCardProps {
   isSelectable?: boolean;
   isSelected?: boolean;
   isDragging?: boolean;
+  size?: CardSize;
 }
 
-export default function NormalCard({ card, onClick, isSelectable = false, isSelected = false, isDragging = false }: NormalCardProps) {
+export default function NormalCard({
+  card,
+  onClick,
+  isSelectable = false,
+  isSelected = false,
+  isDragging = false,
+  size = 'md'
+}: NormalCardProps) {
   const [colorBlindMode, setColorBlindMode] = useState(
     () => localStorage.getItem('3eal-colorblind-mode') === 'true'
   );
@@ -22,6 +31,7 @@ export default function NormalCard({ card, onClick, isSelectable = false, isSele
 
   if (card.category === 'ACTION') return null;
 
+  const dims = cardDims(size);
   const isGlowing = isSelected || isDragging;
   const backgroundColor = `#${card.color}`;
   const glowColor = selectionRingColor(card.category, card.color);
@@ -41,12 +51,12 @@ export default function NormalCard({ card, onClick, isSelectable = false, isSele
         onClick={onClick}
         aria-label={`TEAL wild card${colorLabel}`}
         role="img"
-        className={`relative flex h-[112px] w-[80px] items-center justify-center rounded-xl shadow-md transition-all ${isSelectable ? 'cursor-pointer hover:scale-105' : ''}`}
-        style={{ backgroundColor, ...(isGlowing ? { boxShadow: `0 0 0 4px ${glowColor}` } : {}) }}
+        className={`relative flex ${dims.box} items-center justify-center shadow-md transition-all ${isSelectable ? 'cursor-pointer hover:scale-105' : ''}`}
+        style={{ backgroundColor, borderRadius: dims.radius, ...(isGlowing ? { boxShadow: `0 0 0 4px ${glowColor}` } : {}) }}
       >
-        {colorBlindMode && <div aria-hidden="true" className="pointer-events-none absolute inset-0 rounded-xl opacity-50" style={{ backgroundImage: color.pattern, backgroundSize: card.color === '008080' ? '9px 9px' : undefined }} />}
-        <span className="text-xl font-bold text-black" aria-hidden="true">TEAL</span>
-        {colorBlindMode && <span aria-hidden="true" className="absolute left-1 top-1 z-10 rounded bg-white/90 px-1 text-xs font-black text-black">{color.glyph}</span>}
+        {colorBlindMode && <div aria-hidden="true" className="pointer-events-none absolute inset-0 opacity-50" style={{ backgroundImage: color.pattern, backgroundSize: card.color === '008080' ? '9px 9px' : undefined, borderRadius: dims.radius }} />}
+        <span className={`font-bold text-black ${dims.wildWord}`} aria-hidden="true">TEAL</span>
+        {colorBlindMode && <span aria-hidden="true" className={`absolute left-1 top-1 z-10 rounded bg-white/90 font-black text-black ${dims.glyph}`}>{color.glyph}</span>}
       </div>
     );
   }
@@ -60,15 +70,7 @@ export default function NormalCard({ card, onClick, isSelectable = false, isSele
           <div className="relative w-full h-full flex items-center justify-center">
             <svg viewBox="0 0 100 100" className="w-4/5 h-4/5">
               <circle cx="50" cy="50" r="45" fill="#000000" />
-              <text
-                x="50"
-                y="50"
-                dominantBaseline="central"
-                textAnchor="middle"
-                fill={numberColor}
-                fontSize="50"
-                fontWeight="bold"
-              >
+              <text x="50" y="50" dominantBaseline="central" textAnchor="middle" fill={numberColor} fontSize="50" fontWeight="bold">
                 {card.number}
               </text>
             </svg>
@@ -80,15 +82,7 @@ export default function NormalCard({ card, onClick, isSelectable = false, isSele
           <div className="relative w-full h-full flex items-center justify-center">
             <svg viewBox="0 0 100 100" className="w-4/5 h-4/5">
               <polygon points="50,10 90,90 10,90" fill="#000000" />
-              <text
-                x="50"
-                y="58"
-                dominantBaseline="central"
-                textAnchor="middle"
-                fill={numberColor}
-                fontSize="50"
-                fontWeight="bold"
-              >
+              <text x="50" y="58" dominantBaseline="central" textAnchor="middle" fill={numberColor} fontSize="50" fontWeight="bold">
                 {card.number}
               </text>
             </svg>
@@ -100,15 +94,7 @@ export default function NormalCard({ card, onClick, isSelectable = false, isSele
           <div className="relative w-full h-full flex items-center justify-center">
             <svg viewBox="0 0 100 100" className="w-4/5 h-4/5">
               <rect x="10" y="10" width="80" height="80" fill="#000000" />
-              <text
-                x="50"
-                y="50"
-                dominantBaseline="central"
-                textAnchor="middle"
-                fill={numberColor}
-                fontSize="50"
-                fontWeight="bold"
-              >
+              <text x="50" y="50" dominantBaseline="central" textAnchor="middle" fill={numberColor} fontSize="50" fontWeight="bold">
                 {card.number}
               </text>
             </svg>
@@ -120,15 +106,7 @@ export default function NormalCard({ card, onClick, isSelectable = false, isSele
           <div className="relative w-full h-full flex items-center justify-center">
             <svg viewBox="0 0 100 100" className="w-4/5 h-4/5">
               <polygon points="50,10 90,40 75,85 25,85 10,40" fill="#000000" />
-              <text
-                x="50"
-                y="52"
-                dominantBaseline="central"
-                textAnchor="middle"
-                fill={numberColor}
-                fontSize="50"
-                fontWeight="bold"
-              >
+              <text x="50" y="52" dominantBaseline="central" textAnchor="middle" fill={numberColor} fontSize="50" fontWeight="bold">
                 {card.number}
               </text>
             </svg>
@@ -140,15 +118,7 @@ export default function NormalCard({ card, onClick, isSelectable = false, isSele
           <div className="relative w-full h-full flex items-center justify-center">
             <svg viewBox="0 0 100 100" className="w-4/5 h-4/5">
               <polygon points="50,5 90,30 90,70 50,95 10,70 10,30" fill="#000000" />
-              <text
-                x="50"
-                y="50"
-                dominantBaseline="central"
-                textAnchor="middle"
-                fill={numberColor}
-                fontSize="50"
-                fontWeight="bold"
-              >
+              <text x="50" y="50" dominantBaseline="central" textAnchor="middle" fill={numberColor} fontSize="50" fontWeight="bold">
                 {card.number}
               </text>
             </svg>
@@ -163,20 +133,13 @@ export default function NormalCard({ card, onClick, isSelectable = false, isSele
   return (
     <div
       onClick={onClick}
-      className={`
-        relative
-        w-[80px] h-[112px]
-        overflow-hidden
-        shadow-md
-        transition-all
-        ${isSelectable ? 'cursor-pointer hover:scale-105 hover:shadow-xl' : ''}
-      `}
-      style={{ backgroundColor, borderRadius: '12px', ...(isGlowing ? { boxShadow: `0 0 0 4px ${glowColor}` } : {}) }}
+      className={`relative ${dims.box} overflow-hidden shadow-md transition-all ${isSelectable ? 'cursor-pointer hover:scale-105 hover:shadow-xl' : ''}`}
+      style={{ backgroundColor, borderRadius: dims.radius, ...(isGlowing ? { boxShadow: `0 0 0 4px ${glowColor}` } : {}) }}
       aria-label={`${color.name} ${card.number} ${card.shape}${colorLabel}`}
     >
       {colorBlindMode && <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-0 opacity-50" style={{ backgroundImage: color.pattern, backgroundSize: card.color === '008080' ? '9px 9px' : undefined }} />}
       {renderShape()}
-      {colorBlindMode && <span aria-hidden="true" className="absolute left-1 top-1 z-10 rounded bg-white/90 px-1 text-xs font-black text-black">{color.glyph}</span>}
+      {colorBlindMode && <span aria-hidden="true" className={`absolute left-1 top-1 z-10 rounded bg-white/90 font-black text-black ${dims.glyph}`}>{color.glyph}</span>}
     </div>
   );
 }
