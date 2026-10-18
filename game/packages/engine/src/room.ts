@@ -490,7 +490,8 @@ function startGame(state: RoomState, now: number): string | undefined {
       const card = deck.pop();
       if (!card) return 'The deck ran out while dealing the starting Tables';
       if (card.kind === 'action') skippedActions.push(card);
-      else player.table.push({ card, revealed: false });
+      // Starting Table cards are dealt revealed: everyone can see them.
+      else player.table.push({ card, revealed: true });
     }
   }
   deck.push(...skippedActions);

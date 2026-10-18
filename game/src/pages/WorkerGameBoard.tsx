@@ -612,6 +612,9 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
   })() : null;
 
   const opponents = data.players.filter((player) => player.id !== selfId);
+  // REVEAL needs at least one concealed card on an opponent's Table. Starting
+  // cards are dealt revealed, so this is false until something is concealed.
+  const revealHasTarget = opponents.some((player) => player.table.some((slot) => slot.state === 'concealed'));
   const selectedOpponent = selectedOpponentId ? data.players.find((player) => player.id === selectedOpponentId) : undefined;
   const handNormals = hand.filter((card) => card.kind !== 'action');
   const handActions = hand.filter((card) => card.kind === 'action');
@@ -695,14 +698,21 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
 
         {/* Action targeting step indicator (non-blocking: the board stays live). */}
         {targetForAction && (
-          <Panel padding="compact" className="mb-3 flex flex-wrap items-center justify-between gap-3 border-white/25">
+          <Panel
+            padding="compact"
+            className={`mb-3 flex flex-wrap items-center justify-between gap-3 ${targetForAction === 'REVEAL' && !revealHasTarget ? 'border-amber-300/40' : 'border-white/25'}`}
+          >
             <div>
               <p className="text-xs tracking-[0.12em] text-white/50">1 Choose player → 2 Choose card</p>
-              <p className="text-sm text-amber-100">
-                {targetForAction === 'CONCEAL'
-                  ? 'Choose one of your revealed cards.'
-                  : `Choose a card on an opponent's Table${targetForAction === 'REVEAL' ? ' that is concealed' : ''}.`}
-              </p>
+              {targetForAction === 'REVEAL' && !revealHasTarget ? (
+                <p className="text-sm text-amber-100">No concealed cards to reveal yet. Nothing is face-down on any opponent's Table.</p>
+              ) : (
+                <p className="text-sm text-amber-100">
+                  {targetForAction === 'CONCEAL'
+                    ? 'Choose one of your revealed cards.'
+                    : `Choose a card on an opponent's Table${targetForAction === 'REVEAL' ? ' that is concealed' : ''}.`}
+                </p>
+              )}
             </div>
             <Button size="sm" variant="secondary" onClick={() => { setSelectedHandId(null); setTableSelection(null); }}>Cancel</Button>
           </Panel>

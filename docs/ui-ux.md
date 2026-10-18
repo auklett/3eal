@@ -6,10 +6,11 @@
 * **Main Background Color:** `#000000` (Pure Black)
 * **Main Text Color:** `#FFFFFF` (Pure White)
 * **Cards are the only colourful things.** Everything else is monochrome: 1px `white/10` lines, `rounded-2xl` panels on a `white/[0.03]` fill, generous spacing, and calm sentence-case headings (no all-caps shouting). Fun comes from motion and detail, not decoration.
-* **Card Aspect Ratio:** `5:7`, drawn at three sizes:
+* **Card Aspect Ratio:** `5:7`, drawn at four sizes:
   * `md` — 80px × 112px (the Table and Hand hero size on desktop, `border-radius: 12px`).
   * `sm` — 64px × 90px (overlays, the opponent-table modal, and the Table/Hand on narrow screens).
   * `xs` — 32px × 45px (the opponents rail's mini 3×3 Table).
+  * `rules` — 56px × 78px (static example cards inside the Rules overlay).
 * **Table Layout:** 3×3 grid, normally max 9 cards (Normal + TEAL only); the three starting cards are face-up.
 * **Hand Layout:** On desktop it is the column beside the Table; on mobile it is a bottom dock with a horizontal, scrollable card row. No fixed maximum. Holds drawn cards and cards moved off the Table; every NORMAL/TEAL card left in Hand is shuffled back into the deck at turn end, while unused Action cards persist across turns.
 * **Card Rearrangement:** Drag-and-drop, or tap-to-select then tap another slot to move/swap. Applies to the **Table** at any time. Reordering is local-only and is not sent to the server or synchronized to opponents.
@@ -25,7 +26,7 @@
 | `--color-panel` | `rgb(255 255 255 / 0.03)` | Panel fill |
 | `--color-accent` | `#ffffff` | Focus/active states — **never a card colour** |
 | `--color-muted` | `rgb(255 255 255 / 0.55)` | Secondary text |
-| `--animate-float / fade-in / fade-out / card-in / pop-in / pulse-soft / shuffle-out` | keyframes | The motion vocabulary (see 6, all disabled under `prefers-reduced-motion`) |
+| `--animate-float / fade-in / fade-out / card-in / pop-in / pulse-soft / shuffle-out / trait-pulse` | keyframes | The motion vocabulary (see 6, all disabled under `prefers-reduced-motion`) |
 
 * **Fonts:** Outfit (UI) and JetBrains Mono (codes/timers/counts). They are referenced first in the token stacks with system fallbacks, so the app renders correctly even where the webfonts are not installed.
 * **Color-blind mode** and reduced motion are honoured across every new component.
@@ -68,7 +69,7 @@
 * **Disabled:** Dimmed/opacity reduced when not playable in the current phase or not a legal target (e.g. an already-Revealed card during a REVEAL targeting flow).
 
 ### 2.4 Card Back
-* A face-down card is a near-black panel (`#131316`) with a 1px `#3a3a40` border, a subtle 45° hairline pattern, an inset hairline frame, and a faint `3EAL` monogram. It reads instantly as face-down at every size (`xs` in the opponents rail through `md` on the Table) and carries `aria-label="Concealed card"`.
+* A face-down card is a near-black panel (`#131316`) with a 1px `#3a3a40` border, a subtle 45° hairline pattern, an inset hairline frame, and a faint `3EAL` monogram. It reads instantly as face-down at every size (`xs` in the opponents rail and `rules` in the Rules overlay through `md` on the Table) and carries `aria-label="Concealed card"`.
 
 ---
 
@@ -118,7 +119,7 @@ A single centered column (max ~520px) using the same glass-panel feel as Home, b
 * **Players overlay:** accessible from the top bar; rows show name, mono Table count, and host/away badges, and only the viewer's own Hand count. Rules are reachable from this overlay.
 
 ### 3.4 Hamburger Menu Pages (Overlay)
-* **Rules Page:** Full game rules recap (objective, valid patterns, turn flow, action cards), updated to reflect the current rules (3 patterns, Table/Hand zones, TEAL as a wild card). X button to return to game.
+* **Rules Page:** One shared visual component (`RulesOverlay`) opened from Home's **Rules** button and the in-game **Players** overlay; it looks identical in both places. Content is visual-first and text-last — roughly 100 words of copy excluding card faces, with every caption eight words or fewer and no paragraphs. Sections, in order: **Goal** (a mini 3×3 Table whose rows are visually grouped as three sets of three, caption “Build 3 sets of 3 on your Table.”); **Valid sets**, the centrepiece — one panel per pattern (**Same colour**, **Same number**, **Same shape**, the **TEAL wild** example, and a red-✕ **Nothing matches** counter-example), each drawn with real card components at the `rules` size, a text chip naming the shared trait, and a one-time pulse mark, all behind `prefers-reduced-motion`; **Card types** (Normal / TEAL / Action with mono count chips `175` / `3` / `40`); **Action cards** (all four real action cards, each with a caption of six words or fewer and an APPEAL-eligibility badge, with the action name shown once on the card face and never repeated in the caption); **Your turn** (four icon steps Draw → Play → Act → End with three-word captions, plus the mono line `60s per turn`); **Hidden vs revealed** (a revealed card with its eye badge beside a face-down card back); and **Quick facts** chips, including the corrected rule that *all* unused Action cards stay in Hand until played. Two columns on wide screens and one on mobile; example cards are static and non-interactive, carry no eye badge or selection outline (the eye badge appears only in the Hidden-vs-revealed example), and never list colours or hex codes. The shared-trait mark is never colour-only, and each example carries an `aria-label` describing it in words.
 * **Players Page:** Summary list showing name, **Table count**, only the viewer's own Hand count, and host status, with X button to return.
 
 ---
@@ -145,7 +146,7 @@ After the winner and winning sets are shown, **Return to Lobby** opens the same 
 1. Play an action card (CONCEAL/STEAL/REVEAL) from Hand.
 2. **CONCEAL:** Opens overlay showing only the player's own Revealed Table cards (Normal or TEAL). Click to select target.
 3. **STEAL:** Opens overlay → Step 1: Select target player from list. Step 2: View opponent's Table grid. Revealed cards show their true face — click directly to target. Concealed cards show a face-down back — click a slot to target it blind (you won't know what it is until the steal resolves).
-4. **REVEAL:** Opens overlay → Step 1: Select target player. Step 2: View opponent's Table grid — only Concealed slots are clickable; Revealed cards are dimmed/disabled (revealing an already-Revealed card has no effect).
+4. **REVEAL:** Opens overlay → Step 1: Select target player. Step 2: View opponent's Table grid — only Concealed slots are clickable; Revealed cards are dimmed/disabled (revealing an already-Revealed card has no effect). Because every Table starts revealed, when no opponent has a concealed card the step indicator instead shows a clear disabled-state message ("No concealed cards to reveal yet…") with **Cancel**; the server likewise rejects the play without consuming the action card.
 5. Visual feedback: Targetable cards/slots highlighted with white outline and yellow glow indicator.
 6. Confirmation: Selection immediately submits the action to the server, which opens the Interrupt Phase if the action is eligible for appeal. Cancel button available to back out before confirming.
 7. A stolen card keeps its Revealed/Concealed state after moving to the new owner's Table.
@@ -212,6 +213,7 @@ The board is driven by the breakpoint `md` (768px): below it the layout is the p
 |-----------|--------|
 | Card Components (Normal, Action, TEAL) | ✅ Implemented (TEAL word centered; no stars) |
 | Table Grid Layout (3×3) | ✅ Implemented |
+| Starting Table cards revealed | ✅ Implemented (the engine deals `revealed: true`; owner, opponents, and spectators all see the three cards, with the eye badge on the owner's Table) |
 | Hand Layout and turn-end cleanup | ✅ Implemented (Normal/TEAL cards recycled; Action cards retained) |
 | Card Rearrangement (Drag-and-Drop + Tap-to-Move) | ✅ Implemented locally; not server-synchronized |
 | Unique Lobby Player Names and Numbered Defaults | ✅ Implemented |
@@ -239,6 +241,7 @@ The board is driven by the breakpoint `md` (768px): below it the layout is the p
 | Action Targeting UI (revealed-direct / concealed-blind) | ✅ Implemented |
 | Interrupt/Appeal Pop-up (multi-responder, 30s) | ✅ Implemented |
 | Home View Rules Button | ✅ Implemented |
+| Visual Rules overlay with set examples | ✅ Implemented (one shared `RulesOverlay` for Home and in-game; static `rules`-size set/action examples, ≤8-word captions, no colour-only cues) |
 | Lobby/Home Views | ✅ Implemented |
 | Mobile Responsive | ✅ Responsive layout and tap targets implemented; manual device matrix remains |
 | Accessibility | ⚠️ Semantic labels, focus-visible styling, and reduced-motion behavior implemented; full assistive-technology audit remains |

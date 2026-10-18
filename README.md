@@ -6,6 +6,7 @@
 
 - **Deck:** 218 cards — 175 Normal, 3 TEAL wild, and 40 Action cards (10 each of CONCEAL, STEAL, REVEAL, APPEAL).
 - **Colors:** Periwinkle (`C0C0FF`), Teal (`008080`), Rose (`C06060`), Grape Soda (`884488`), French Blue (`404088`).
+- **Setup:** each player's Table starts with three revealed cards (everyone can see them) and no starting Hand.
 - **Sets:** Three cards sharing a color, number, or shape. TEAL is always Teal for color sets and can adopt any number or shape otherwise.
 - **Interrupts:** CONCEAL, STEAL, and REVEAL allow eligible opponents to APPEAL during a maximum 30-second window.
 - **Turns:** 60 seconds by default; the host can choose 15–180 seconds in the lobby. The timer pauses during interrupts.

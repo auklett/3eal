@@ -61,20 +61,34 @@ describe('filtered room views', () => {
     expect(JSON.stringify(playerSnapshot)).not.toContain('10000000-0000-4000-8000-000000000002');
   });
 
-  it('never serializes the identity of another player’s concealed cards', () => {
+  it('deals the three starting Table cards revealed to opponents and spectators', () => {
+    const room = startedRoom();
+    const spectator = spectatorView(room);
+    if (spectator.role !== 'spectator') throw new Error('Expected spectator view');
+    for (const player of spectator.data.players) {
+      expect(player.table).toHaveLength(3);
+      expect(player.table.every((slot) => slot.state === 'revealed')).toBe(true);
+    }
+  });
+
+  it('never serializes the identity of a concealed card to another viewer', () => {
     const room = startedRoom();
     const owner = room.players[0];
+    // Starting cards are dealt revealed; conceal one to create hidden state.
+    owner.table[0].revealed = false;
+    const concealedId = owner.table[0].card.id;
+
     const spectator = spectatorView(room);
     if (spectator.role !== 'spectator') throw new Error('Expected spectator view');
     const publicOwner = spectator.data.players.find((player) => player.id === owner.id);
-    expect(publicOwner?.table.every((slot) => slot.state === 'concealed')).toBe(true);
-    expect(JSON.stringify(publicOwner?.table)).not.toContain('"color"');
-    expect(JSON.stringify(publicOwner?.table)).not.toContain('"number"');
-    expect(JSON.stringify(publicOwner?.table)).not.toContain('"shape"');
+    expect(publicOwner?.table[0]).toEqual({ state: 'concealed', cardId: concealedId });
+    expect(JSON.stringify(publicOwner?.table[0])).not.toContain('"color"');
+    expect(JSON.stringify(publicOwner?.table[0])).not.toContain('"number"');
+    expect(JSON.stringify(publicOwner?.table[0])).not.toContain('"shape"');
 
     const privateOwner = playerView(room, owner.id);
     if (privateOwner.role !== 'player') throw new Error('Expected player view');
-    expect(Object.keys(privateOwner.data.you.concealedOwn)).toHaveLength(3);
+    expect(Object.keys(privateOwner.data.you.concealedOwn)).toEqual([concealedId]);
     expect(Object.keys(spectator.data)).not.toContain('you');
   });
 

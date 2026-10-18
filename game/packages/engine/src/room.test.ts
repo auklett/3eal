@@ -21,7 +21,7 @@ function startTwoPlayerRoom(): RoomState {
 }
 
 describe('room rules', () => {
-  it('requires two players and starts a concealed three-card table for each', () => {
+  it('requires two players and starts a revealed three-card table for each', () => {
     const room = createRoom('ABCD', 'host', 'host-session', 'Host', 'seed');
     expect(reduceRoom(room, 'host', { t: 'start' }, 1000)).toMatchObject({ error: 'At least two players are required to start' });
 
@@ -29,7 +29,7 @@ describe('room rules', () => {
     expect(started.phase).toBe('playing');
     expect(started.players.map((player) => player.table)).toHaveLength(2);
     expect(started.players.every((player) => player.table.length === 3)).toBe(true);
-    expect(started.players.every((player) => player.table.every((slot) => !slot.revealed))).toBe(true);
+    expect(started.players.every((player) => player.table.every((slot) => slot.revealed))).toBe(true);
     expect(started.turnEndsAt).toBe(61_000);
     expect(started.turnNumber).toBe(1);
     expect(started.players[0].id).not.toBe(started.players[0].sessionIds[0]);
@@ -147,7 +147,8 @@ describe('room rules', () => {
     const active = room.players.find((player) => player.id === room.activePlayerId);
     const target = room.players.find((player) => player.id !== room.activePlayerId);
     if (!active || !target) throw new Error('Expected two players');
-    target.table.forEach((slot) => { slot.revealed = true; });
+    // Starting Table cards are dealt revealed, so REVEAL has no valid target yet.
+    expect(target.table.every((slot) => slot.revealed)).toBe(true);
     active.hand.push({ id: 'reveal-action', kind: 'action', action: 'REVEAL' });
     const result = reduceRoom(room, active.id, {
       t: 'action',
