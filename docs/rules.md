@@ -20,7 +20,7 @@ TEAL is a distinct wild card, not an ordinary Teal-colored Normal card. For a Sa
 
 ## Zones and visibility
 
-- **Table:** Holds Normal and TEAL cards. Cards are either revealed (visible to everyone) or concealed (identity visible only to their owner). A STEAL may temporarily take a table above nine cards until end-of-turn cleanup.
+- **Table:** Holds Normal and TEAL cards. Cards are either revealed (visible to everyone) or concealed (identity visible only to their owner). The three starting Table cards are dealt revealed, so everyone can see them; CONCEAL can hide one later. A STEAL may temporarily take a table above nine cards until end-of-turn cleanup.
 - **Hand:** Private and unbounded. All unused Action cards remain in Hand across turns until played; all other cards left at turn end are shuffled straight back into the deck. No card in a Hand can be targeted.
 - Public views never include another player's hand size or contents. A player's own view includes their own Hand; opponents and spectators see only their Table. Players see their own concealed cards. Spectators receive exactly the same public information as an opponent, with no private-card privileges.
 - Card IDs are random and must not encode card identity. Stealing preserves the card's reveal/conceal state; the thief can see it in their own private view.
@@ -35,7 +35,7 @@ The win check searches for any valid partition of all nine Table cards into thre
 
 The room supports at least two players and has no configured maximum player count. Starting still requires enough Normal/TEAL cards to deal three Table cards to every player. New users join as players by default while the game is in the lobby; they can switch to spectator there. If the game has started, they join as spectators. Player joining is not capped by a configured limit.
 
-Deal three cards to each player's Table, all concealed, and no cards to their Hand. The remaining cards form the draw deck. Choose the first active player randomly.
+Deal three cards to each player's Table, all revealed, and no cards to their Hand. The remaining cards form the draw deck. Choose the first active player randomly.
 
 ## Turn flow
 
@@ -65,9 +65,9 @@ Playing CONCEAL, STEAL, or REVEAL opens an interrupt with a maximum duration of 
 - The interrupt ends immediately when someone appeals, all eligible APPEAL holders have passed, or the 30-second maximum expires. The first appeal received by the server wins.
 - APPEAL cancels the pending action; both action cards are shuffled straight back into the deck. APPEAL cannot itself be appealed.
 - Fast passing may reveal whether someone holds APPEAL; the game intentionally adds no random or fixed wait to hide that information.
-- REVEAL with no concealed cards on the target's Table is rejected and does not consume its action card.
+- REVEAL with no concealed cards on the target's Table is rejected and does not consume its action card. Because every Table starts revealed, REVEAL has no legal target until a card is concealed.
 
-CONCEAL targets one of the actor's own revealed Table cards. STEAL takes a Normal/TEAL card from an opponent's Table, selected directly if revealed and blindly if concealed. REVEAL selects a concealed card on an opponent's Table blindly and makes it revealed when resolved.
+CONCEAL targets one of the actor's own revealed Table cards. STEAL takes a Normal/TEAL card from an opponent's Table, selected directly if revealed and blindly if concealed. REVEAL selects a concealed card on an opponent's Table blindly and makes it revealed when resolved. A stolen card keeps its revealed/concealed state on the new owner's Table.
 
 ### End
 

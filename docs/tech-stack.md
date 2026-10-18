@@ -31,7 +31,7 @@ game/
 
 ## Authoritative state and privacy
 
-Each room's Durable Object stores the shuffled deck, hands, Tables, action/interrupt state, seats, and rejoin requests in one SQLite row. A validated action reduces the pure room state, persists it, advances the earliest alarm, and broadcasts full snapshots. The Worker never serializes the seed, deck order, opponents' hands, or concealed card identities into public views. Players receive only their own hand and concealed cards in a separate private field. Spectators receive the same public snapshot as opponents.
+Each room's Durable Object stores the shuffled deck, hands, Tables, action/interrupt state, seats, and rejoin requests in one SQLite row. A validated action reduces the pure room state, persists it, advances the earliest alarm, and broadcasts full snapshots. The Worker never serializes the seed, deck order, opponents' hands, or concealed card identities into public views. Players receive only their own hand and concealed cards in a separate private field. Spectators receive the same public snapshot as opponents. Each player's three starting Table cards are dealt revealed, so their identities are public to everyone; only cards concealed later (a card placed from Hand, or one hidden by CONCEAL) have private identities.
 
 Card IDs are seeded-random 128-bit values, independent of card descriptions. The deck seed comes from the Worker and stays in Durable Object state. At game end the public snapshot reveals all cards and adds the three winning sets (the valid partition the engine found), so every client can render the same Game Over grouping.
 

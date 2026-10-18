@@ -1,4 +1,4 @@
-export type CardSize = 'md' | 'sm' | 'xs';
+export type CardSize = 'md' | 'sm' | 'xs' | 'rules';
 
 export interface CardDims {
   /** Width/height utility pair, 5:7 aspect. */
@@ -15,11 +15,26 @@ export interface CardDims {
 }
 
 /**
- * The three card sizes in the app. `md` (80×112) is the Table/Hand hero size,
- * `sm` (64×90) is used inside overlays, and `xs` (32×45) is the scaled-down
- * Table shown in the opponents rail.
+ * The card sizes in the app. `md` (80×112) is the Table/Hand hero size, `sm`
+ * (64×90) is used inside overlays, `xs` (32×45) is the scaled-down Table shown
+ * in the opponents rail, and `rules` (56×78) is the compact static example size
+ * used inside the Rules overlay.
  */
 export function cardDims(size: CardSize): CardDims {
+  if (size === 'rules') {
+    return {
+      box: 'w-14 h-[78px]',
+      radius: 8,
+      wildWord: 'text-sm',
+      glyph: 'px-1 text-[9px]',
+      actionTitle: 'text-[11px]',
+      // Action card faces show the name only; captions below carry the copy.
+      actionDescription: 'hidden',
+      backMonogram: 'text-sm',
+      badgeBox: 'h-4 w-4',
+      badgeIcon: 'h-3 w-3'
+    };
+  }
   if (size === 'xs') {
     return {
       box: 'w-8 h-[45px]',

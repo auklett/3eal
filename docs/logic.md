@@ -15,7 +15,7 @@ type ActionCard = { id: string; kind: 'action'; action: ActionKind };
 type Card       = NormalCard | TealCard | ActionCard;
 ```
 
-Reveal state is **not** stored on the card. It lives on the Table slot as `{ card: TableCard; revealed: boolean }`, because the same card can be concealed on one Table and then revealed on another after a STEAL. Only NORMAL and TEAL cards can sit on a Table; ACTION cards only ever exist in a Hand.
+Reveal state is **not** stored on the card. It lives on the Table slot as `{ card: TableCard; revealed: boolean }`, because the same card can be concealed on one Table and then revealed on another after a STEAL. Only NORMAL and TEAL cards can sit on a Table; ACTION cards only ever exist in a Hand. Each player's three starting Table cards are dealt already revealed (`revealed: true`); a card later moved from Hand to the Table is concealed (`revealed: false`) until a REVEAL makes it public.
 
 ### 1.2 Player Schema
 ```typescript
@@ -124,7 +124,7 @@ Interrupt eligibility is deliberately **not** stored as a broadcastable list. Wh
 - **Phase:** Played during MAIN phase, triggers INTERRUPT phase.
 
 ### 3.3 REVEAL
-- **Target:** A Concealed card on an opponent's Table, selected blind. (Targeting an already-Revealed card is not allowed — there's no effect to gain.)
+- **Target:** A Concealed card on an opponent's Table, selected blind. (Targeting an already-Revealed card is not allowed — there's no effect to gain. Because every Table starts revealed, REVEAL has no legal target until some card is concealed; such a play is rejected without consuming the action card.)
 - **Effect:** Marks that Table slot revealed (`revealed = true`, visible to all players).
 - **Eligible to APPEAL:** Only the targeted player.
 - **Phase:** Played during MAIN phase, triggers INTERRUPT phase.
