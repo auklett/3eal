@@ -1,10 +1,22 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { COLOR_HEX, countCompleteSets, type Card as EngineCard } from '@3eal/engine';
 import CardComponent from '../components/cards/CardComponent';
+import type { CardSize } from '../components/cards/cardSize';
 import { useRoom, type SendFeedback } from '../hooks/useRoom';
+import { useDialog } from '../hooks/useDialog';
+import { useIsCompact } from '../hooks/useIsCompact';
 import { mergeTableLayout, moveOrSwap, placeInLayout, serverSlotForVisual, tableCardIds, type TableLayout } from '../logic/tableLayout';
+import { completeSetCardIds } from '../logic/sets';
 import type { Card as UiCard } from '../types';
 import type { PublicSlot, View } from '../shared/protocol';
+import Panel from '../components/ui/Panel';
+import Button from '../components/ui/Button';
+import Chip from '../components/ui/Chip';
+import Badge from '../components/ui/Badge';
+import IconButton from '../components/ui/IconButton';
+import ConnectionDot from '../components/ui/ConnectionDot';
+import SpinnerDots from '../components/ui/SpinnerDots';
+import RulesOverlay from '../components/game/RulesOverlay';
 
 interface WorkerGameBoardProps {
   roomCode: string;
@@ -12,7 +24,6 @@ interface WorkerGameBoardProps {
   onReturnToLobby: () => void;
 }
 
-const buttonClass = 'min-h-11 rounded-xl border border-white/30 px-4 py-2 font-semibold transition hover:border-teal-300 hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-40';
 const DRAG_THRESHOLD = 6;
 // The pending text describes work in flight; it must not claim the move happened.
 const MOVE_FEEDBACK: SendFeedback = { pending: 'Submitting move…', confirmation: 'Move confirmed.' };
@@ -81,6 +92,57 @@ function activeId(view: View, roomCode: string): string {
     : sessionStorage.getItem(`3eal-session:${roomCode}`) ?? '';
 }
 
+function tableSlotSize(size: CardSize): string {
+  if (size === 'xs') return 'min-h-[45px]';
+  if (size === 'sm') return 'min-h-[90px]';
+  return 'min-h-[112px]';
+}
+
+function emptySlotSize(size: CardSize): string {
+  if (size === 'xs') return 'h-[45px] w-8';
+  if (size === 'sm') return 'h-[90px] w-16';
+  return 'h-28 w-20';
+}
+
+/** A 30-second countdown ring for the appeal window (mono seconds in the middle). */
+function AppealRing({ seconds, paused }: { seconds: number | null; paused: boolean }) {
+  const total = 30;
+  const value = seconds === null ? total : Math.max(0, Math.min(total, seconds));
+  const radius = 26;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference * (1 - value / total);
+  return (
+    <span className="relative inline-flex h-16 w-16 items-center justify-center" role="img" aria-label={`${value} seconds remaining`}>
+      <svg viewBox="0 0 64 64" className="h-16 w-16 -rotate-90">
+        <circle cx="32" cy="32" r={radius} fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth="4" />
+        <circle
+          cx="32"
+          cy="32"
+          r={radius}
+          fill="none"
+          stroke="#ffffff"
+          strokeWidth="4"
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          style={{ transition: paused ? 'none' : 'stroke-dashoffset 250ms linear' }}
+        />
+      </svg>
+      <span className="absolute font-mono text-sm tabular-nums">{value}</span>
+    </span>
+  );
+}
+
+function PlayersGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="9" cy="8" r="3" />
+      <path d="M3.5 19a5.5 5.5 0 0 1 11 0" />
+      <path d="M16 6.2a3 3 0 0 1 0 5.6M17.5 19a5.5 5.5 0 0 0-2-4.2" />
+    </svg>
+  );
+}
+
 export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: WorkerGameBoardProps) {
   const playerName = sessionStorage.getItem('3eal-player-name') ?? 'Player 1';
   const { view, status, error, send, rejoinRequests, pending, confirmation } = useRoom(roomCode, { name: playerName });
@@ -88,16 +150,30 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
   const [tableSelection, setTableSelection] = useState<number | null>(null);
   const [rejoinName, setRejoinName] = useState('');
   const [showPlayers, setShowPlayers] = useState(false);
+  const [showRules, setShowRules] = useState(false);
+  const [selectedOpponentId, setSelectedOpponentId] = useState<string | null>(null);
+  const [handOpen, setHandOpen] = useState(true);
+  const [hintDismissed, setHintDismissed] = useState(() => localStorage.getItem('3eal-table-hint-dismissed') === 'true');
+  const [announcement, setAnnouncement] = useState('');
   const [now, setNow] = useState(Date.now());
   const [drag, setDrag] = useState<DragMeta & { x: number; y: number } | null>(null);
   const [dragOver, setDragOver] = useState<DragOver>(null);
   const [pendingMoveKind, setPendingMoveKind] = useState<'place' | 'toHand' | null>(null);
+  const compact = useIsCompact();
 
   const layoutRef = useRef<TableLayout>([]);
   const pendingPlacement = useRef<{ cardId: string; slot: number } | null>(null);
   const dragMeta = useRef<DragMeta | null>(null);
   const pointerStart = useRef<{ x: number; y: number; dragging: boolean } | null>(null);
   const suppressClick = useRef(false);
+  const dialogRef = useRef<HTMLElement | null>(null);
+  const opponentDialogRef = useRef<HTMLElement | null>(null);
+  const announcedKey = useRef<string | null>(null);
+
+  const closePlayers = useMemo(() => () => setShowPlayers(false), []);
+  const closeOpponent = useMemo(() => () => setSelectedOpponentId(null), []);
+  useDialog(dialogRef, closePlayers, showPlayers);
+  useDialog(opponentDialogRef, closeOpponent, Boolean(selectedOpponentId));
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 250);
@@ -123,14 +199,44 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
     if (pending === null) setPendingMoveKind(null);
   }, [pending]);
 
+  // One-shot polite announcements for screen readers. Declared before the
+  // early return so hook order never changes.
+  useEffect(() => {
+    const data = view?.data;
+    if (!data) return;
+    const selfIdForAnnounce = view ? activeId(view, roomCode) : '';
+    const myTurn = data.phase === 'playing' && data.activePlayerId === selfIdForAnnounce;
+    const intr = data.interrupt;
+    const key = `${data.phase}|${data.activePlayerId ?? ''}|${data.paused}|${intr?.id ?? ''}`;
+    if (announcedKey.current === null) {
+      announcedKey.current = key;
+      return;
+    }
+    if (announcedKey.current === key) return;
+    announcedKey.current = key;
+    const active = data.players.find((player) => player.id === data.activePlayerId);
+    if (data.phase === 'finished') setAnnouncement('Game over');
+    else if (data.paused) setAnnouncement('Game paused by host');
+    else if (intr) setAnnouncement(`Interrupt open: ${intr.kind}`);
+    else if (myTurn) setAnnouncement('Your turn');
+    else if (active) setAnnouncement(`${active.name}'s turn`);
+  }, [view, roomCode]);
+
+  useEffect(() => {
+    if (error) setAnnouncement(error);
+  }, [error]);
+
   if (!view) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-black p-6 text-center text-white">
-        <div className="max-w-md space-y-3">
-          <p role={error ? 'alert' : 'status'}>{error || (status === 'awaitingApproval' ? 'Waiting for host approval…' : 'Connecting to the game…')}</p>
-          {status === 'awaitingApproval' && <p className="text-sm text-white/60">The host has up to 60 seconds to approve this seat.</p>}
-          {error && <button type="button" className={buttonClass} onClick={onLeave}>Return Home</button>}
-        </div>
+        <Panel padding="roomy" className="w-full max-w-md">
+          <p className="mb-2 flex items-center justify-center gap-2" role={error ? 'alert' : 'status'}>
+            {status === 'reconnecting' && <SpinnerDots className="text-white/60" />}
+            {error || (status === 'awaitingApproval' ? 'Waiting for host approval…' : status === 'reconnecting' ? 'Reconnecting…' : 'Connecting to the game…')}
+          </p>
+          {status === 'awaitingApproval' && <p className="text-sm text-muted">The host has up to 60 seconds to approve this seat.</p>}
+          {error && <Button variant="ghost" fullWidth className="mt-4" onClick={onLeave}>Return Home</Button>}
+        </Panel>
       </main>
     );
   }
@@ -163,7 +269,6 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
       : self.id === interrupt.targetId
   ));
   const appealCard = hand.find((card) => card.kind === 'action' && card.action === 'APPEAL');
-  const isOwnTableInteractive = view.role === 'player' && Boolean(self);
 
   // Local, presentation-only Table order. Merged from every snapshot keyed by
   // card ID so it is never reset by an incoming server update.
@@ -174,18 +279,61 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
     pendingPlacement.current = null;
   }
 
-  const pausedRemainingMs = data.pauseRemaining
-    ? (interrupt ? data.pauseRemaining.interrupt : data.pauseRemaining.turn)
+  const ownTableCards = self
+    ? self.table.flatMap((slot) => {
+        const card = slot.state === 'revealed' ? slot.card : ownPrivate[slot.cardId];
+        return card ? [card] : [];
+      })
+    : [];
+  const setIds = completeSetCardIds(ownTableCards);
+  const setCount = countCompleteSets(ownTableCards);
+
+  const frozenTurnSeconds = data.paused && data.pauseRemaining && data.pauseRemaining.turn !== null
+    ? Math.max(0, Math.ceil(data.pauseRemaining.turn / 1000))
     : null;
-  const secondsLeft = data.paused
-    ? (pausedRemainingMs === null ? null : Math.max(0, Math.ceil(pausedRemainingMs / 1000)))
-    : interrupt
-      ? Math.max(0, Math.ceil(((interrupt.endsAt ?? now) - now) / 1000))
-      : data.turnEndsAt !== null
-        ? Math.max(0, Math.ceil((data.turnEndsAt - now) / 1000))
-        : data.turnRemainingMs === null
-          ? null
-          : Math.ceil(data.turnRemainingMs / 1000);
+  const frozenInterruptSeconds = data.paused && data.pauseRemaining && data.pauseRemaining.interrupt !== null
+    ? Math.max(0, Math.ceil(data.pauseRemaining.interrupt / 1000))
+    : null;
+
+  const turnSeconds = data.paused
+    ? frozenTurnSeconds
+    : data.turnEndsAt !== null
+      ? Math.max(0, Math.ceil((data.turnEndsAt - now) / 1000))
+      : data.turnRemainingMs === null
+        ? null
+        : Math.ceil(data.turnRemainingMs / 1000);
+
+  const interruptSeconds = interrupt
+    ? data.paused
+      ? frozenInterruptSeconds
+      : Math.max(0, Math.ceil(((interrupt.endsAt ?? now) - now) / 1000))
+    : null;
+
+  const turnPct = turnSeconds === null ? 0 : Math.max(0, Math.min(100, (turnSeconds / data.turnDurationSeconds) * 100));
+  const urgentTimer = !data.paused && !interrupt && turnSeconds !== null && turnSeconds <= 10;
+
+  const activePlayer = data.players.find((player) => player.id === data.activePlayerId);
+  const duplicateActiveName = Boolean(activePlayer && data.players.filter((player) => player.name === activePlayer.name).length > 1);
+  const turnText = data.phase === 'finished'
+    ? 'Game over'
+    : data.paused
+      ? 'Game paused by host'
+      : !data.activePlayerId
+        ? 'Waiting for a player to reconnect'
+        : isMyTurn
+          ? 'Your turn'
+          : activePlayer
+            ? duplicateActiveName
+              ? `${activePlayer.name}'s turn · another player with that name`
+              : `${activePlayer.name}'s turn`
+            : 'Waiting for a player to reconnect';
+  const phaseLabel = data.phase === 'finished'
+    ? 'Finished'
+    : data.paused
+      ? 'Paused'
+      : interrupt
+        ? 'Interrupt'
+        : 'Main';
 
   const cardById = (id: string): EngineCard | undefined => {
     const fromHand = hand.find((card) => card.id === id);
@@ -364,7 +512,12 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
     window.location.reload();
   };
 
-  const renderTable = (playerId: string, slots: PublicSlot[]) => {
+  const dismissHint = () => {
+    localStorage.setItem('3eal-table-hint-dismissed', 'true');
+    setHintDismissed(true);
+  };
+
+  const renderTable = (playerId: string, slots: PublicSlot[], size: CardSize = 'md', highlightIds?: Set<string>) => {
     const isOwn = playerId === selfId;
     const isPlayer = view.role === 'player';
     // The owner may always rearrange locally; only spectators are inert.
@@ -375,10 +528,11 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
     if (isOwn) {
       for (const slot of slots) ownSlotById.set(slot.state === 'revealed' ? slot.card.id : slot.cardId, slot);
     }
-    const size = isOwn ? Math.max(layout.length, slots.length, 9) : Math.max(9, slots.length);
+    const size9 = isOwn ? Math.max(layout.length, slots.length, 9) : Math.max(9, slots.length);
+    const gap = size === 'xs' ? 'gap-1' : 'gap-2';
     return (
-      <div className="grid w-fit grid-cols-3 gap-2">
-        {Array.from({ length: size }, (_, index) => {
+      <div className={`grid w-fit grid-cols-3 ${gap}`}>
+        {Array.from({ length: size9 }, (_, index) => {
           const slotId = isOwn ? layout[index] ?? null : null;
           const slot = isOwn
             ? (slotId ? ownSlotById.get(slotId) : undefined)
@@ -398,6 +552,10 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
           // during targeting, and while paused.
           const selectable = canTarget || rearrangeReady;
           const disabled = !isPlayer;
+          const inSet = Boolean(isOwn && highlightIds && cardId && highlightIds.has(cardId));
+          const baseLabel = face
+            ? `${table?.name ?? 'Player'} Table card${slot?.state === 'revealed' ? ', revealed' : ', concealed'}`
+            : 'Empty Table slot';
           return slot ? (
             <button
               key={`${playerId}:${index}`}
@@ -406,12 +564,10 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
               data-table-owner={playerId}
               data-card-id={cardId ?? ''}
               disabled={disabled}
-              aria-label={face
-                ? `${table?.name ?? 'Player'} Table card${slot.state === 'revealed' ? ', revealed' : ', concealed'}`
-                : `${table?.name ?? 'Player'} concealed Table card`}
+              aria-label={inSet ? `${baseLabel}, part of a set` : baseLabel}
               onClick={() => handleSlotClick(playerId, index, slot)}
               onPointerDown={rearrangeReady ? (event) => beginPointer(event, cardId ?? '', 'table', index) : undefined}
-              className={`min-h-[112px] touch-none rounded-xl transition ${canTarget ? 'ring-2 ring-amber-300' : ''} ${isDropTarget ? 'ring-2 ring-teal-300' : ''} ${isDraggingSource ? 'opacity-40' : ''}`}
+              className={`${tableSlotSize(size)} touch-none rounded-[var(--radius-control)] transition ${canTarget ? 'ring-2 ring-amber-300' : ''} ${isDropTarget ? 'ring-2 ring-teal-300' : ''} ${isDraggingSource ? 'opacity-40' : ''} ${inSet ? 'outline outline-2 outline-offset-2 outline-white/40' : ''}`}
             >
               <CardComponent
                 card={face ?? {
@@ -422,6 +578,7 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
                   number: 1,
                   shape: 'circle'
                 }}
+                size={size}
                 faceDown={!face}
                 isSelected={isOwnSelected}
                 isSelectable={selectable}
@@ -438,8 +595,10 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
               disabled={disabled}
               aria-label="Empty Table slot"
               onClick={() => handleSlotClick(playerId, index, undefined)}
-              className={`h-28 w-20 touch-none rounded-xl border border-dashed border-white/20 transition disabled:cursor-default ${isDropTarget ? 'border-2 border-teal-300' : ''}`}
-            />
+              className={`group ${emptySlotSize(size)} touch-none rounded-[var(--radius-control)] border border-dashed border-white/20 transition disabled:cursor-default hover:border-white/40 ${isDropTarget ? 'border-2 border-teal-300' : ''}`}
+            >
+              {size !== 'xs' && <span aria-hidden="true" className="text-lg text-white/0 transition group-hover:text-white/30">+</span>}
+            </button>
           );
         })}
       </div>
@@ -452,270 +611,474 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
     return data.winningSets.map((group) => group.map((id) => byId.get(id)).filter((card): card is EngineCard => Boolean(card)));
   })() : null;
 
+  const opponents = data.players.filter((player) => player.id !== selfId);
+  const selectedOpponent = selectedOpponentId ? data.players.find((player) => player.id === selectedOpponentId) : undefined;
+  const handNormals = hand.filter((card) => card.kind !== 'action');
+  const handActions = hand.filter((card) => card.kind === 'action');
+  const showAppealSheet = Boolean(view.role === 'player' && isEligible && appealCard && interrupt);
+
   return (
-    <main className="min-h-screen bg-black px-4 pb-10 pt-5 text-white sm:px-6">
-      <header className="mx-auto mb-6 flex max-w-6xl items-center justify-between gap-3">
-        <div>
-          <h1 className="m-0 text-3xl font-black tracking-widest">3EAL</h1>
-          <p className="text-xs text-white/60">Room {roomCode} · {status}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button type="button" className={buttonClass} onClick={() => setShowPlayers(true)}>Players</button>
-          <button type="button" className={buttonClass} onClick={onLeave}>Leave</button>
+    <main className="relative min-h-screen bg-black text-white">
+      <div className="sr-only" aria-live="polite" aria-atomic="true">{announcement}</div>
+
+      {/* Top bar */}
+      <header className="sticky top-0 z-40 border-b border-line bg-black/85 backdrop-blur">
+        <div className="mx-auto flex max-w-6xl items-center gap-2 px-3 py-2 sm:px-6">
+          <span className="text-lg font-black tracking-[0.16em]">3EAL</span>
+          <Chip title="Room code">{roomCode}</Chip>
+          <ConnectionDot connected={status === 'connected'} />
+          {status !== 'connected' && <span className="hidden text-xs text-amber-200 sm:inline">Reconnecting…</span>}
+          <div className="ml-auto flex items-center gap-1.5">
+            <Button size="sm" variant="ghost" icon={<PlayersGlyph />} onClick={() => setShowPlayers(true)}>Players</Button>
+            <Button size="sm" variant="ghost" onClick={onLeave}>Leave</Button>
+          </div>
         </div>
       </header>
 
-      {data.paused && (
-        <div
-          className="mx-auto mb-5 flex max-w-6xl flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300/50 bg-amber-100/[0.08] px-4 py-3"
-          role="status"
-          aria-live="polite"
+      <div className="mx-auto max-w-6xl px-3 pb-72 pt-3 sm:px-6 md:pb-8">
+        {/* Turn banner */}
+        <Panel
+          padding="compact"
+          className={`relative mb-3 ${isMyTurn ? 'ring-1 ring-white/25' : ''}`}
+          aria-label="Turn status"
         >
-          <p className="font-semibold text-amber-100">Game paused by host</p>
-          {isHost && (
-            <button type="button" className={buttonClass} onClick={() => send({ t: 'resume' })}>Resume</button>
+          {isMyTurn && !data.paused && (
+            <span aria-hidden="true" className="pointer-events-none absolute inset-0 rounded-[var(--radius-panel)] ring-1 ring-white/25 motion-safe:animate-pulse-soft" />
           )}
-        </div>
-      )}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <Badge tone={data.paused ? 'warn' : isMyTurn ? 'accent' : 'neutral'}>{phaseLabel}</Badge>
+            <p key={`turn-${data.activePlayerId ?? 'none'}-${data.paused}-${data.phase}`} className="font-semibold motion-safe:animate-fade-in" aria-live="polite">{turnText}</p>
 
-      <section className="mx-auto mb-5 flex max-w-6xl flex-wrap items-center justify-between gap-3 rounded-xl border border-white/20 bg-white/[0.05] p-4">
-        <div>
-          <h2 className="text-lg font-semibold">
-            {data.winnerId
-              ? `${data.players.find((player) => player.id === data.winnerId)?.name ?? 'A player'} wins!`
-              : data.paused
-                ? 'Paused'
-                : self && data.activePlayerId === self.id
-                  ? 'Your turn'
-                  : data.activePlayerId
-                    ? `${data.players.find((player) => player.id === data.activePlayerId)?.name ?? 'A player'}'s turn`
-                    : 'Waiting for a player to reconnect'}
-          </h2>
-          <p className="text-sm text-white/60">
-            {data.phase === 'finished'
-              ? 'Game finished · all cards are revealed'
-              : data.paused
-                ? `Paused · ${secondsLeft === null ? 'timer frozen' : `${secondsLeft}s frozen`}`
-                : interrupt
-                  ? `Interrupt · ${secondsLeft ?? 0}s remaining`
-                  : `Turn ${data.turnNumber || 1} · ${secondsLeft === null ? 'Timer paused' : `${secondsLeft}s remaining`}`}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-4 text-sm text-white/75">
-          <span>Deck: {data.deckCount}</span>
-          {self && ownView && <span>Sets: {countCompleteSets(self.table.flatMap((slot) => {
-            const card = slot.state === 'revealed' ? slot.card : ownView.you.concealedOwn[slot.cardId];
-            return card ? [card] : [];
-          }))}/3</span>}
-          {isHost && data.phase === 'playing' && !data.paused && (
-            <button type="button" className={buttonClass} onClick={() => send({ t: 'pause' })}>Pause</button>
-          )}
-        </div>
-      </section>
-
-      {error && <p className="mx-auto mb-4 max-w-6xl text-center text-sm text-rose-300" role="alert">{error}</p>}
-      {data.lastInterruptResult && (
-        <p className="mx-auto mb-4 max-w-6xl text-center text-sm text-amber-100" role="status">
-          {data.lastInterruptResult.kind} {data.lastInterruptResult.outcome === 'appealed' ? 'was appealed' : 'resolved'}.
-        </p>
-      )}
-
-      {interrupt && (
-        <section className="mx-auto mb-6 flex max-w-6xl flex-wrap items-center justify-between gap-4 rounded-xl border border-amber-200/50 bg-amber-100/5 p-4">
-          <p>
-            {interrupt.kind} · {data.players.find((player) => player.id === interrupt.actorId)?.name ?? 'A player'}
-            {interrupt.targetId && ` → ${data.players.find((player) => player.id === interrupt.targetId)?.name ?? 'a player'}`}
-            {' · '}{secondsLeft ?? 0}s{data.paused ? ' (paused)' : ''}
-          </p>
-          {view.role === 'player' && isEligible && appealCard && (
-            <div className="flex gap-2">
-              <button type="button" className={buttonClass} disabled={data.paused} onClick={() => send({ t: 'appeal', cardId: appealCard.id })}>
-                {data.paused ? 'APPEAL (Paused)' : 'APPEAL'}
-              </button>
-              <button type="button" className={buttonClass} disabled={data.paused} onClick={() => send({ t: 'pass' })}>
-                {data.paused ? 'Pass (Paused)' : 'Pass'}
-              </button>
-            </div>
-          )}
-          {view.role === 'player' && isEligible && !appealCard && <span className="text-sm text-white/60">No APPEAL in Hand · passing automatically</span>}
-          {view.role === 'player' && !isEligible && (
-            <span className="text-sm text-white/60">Waiting on a decision…{data.paused ? ' (paused)' : ''}</span>
-          )}
-        </section>
-      )}
-
-      {/* Responsive layout: Table and Hand side by side on wide screens, stacked on narrow */}
-      <section className="mx-auto mb-7 max-w-6xl">
-        <div className="grid gap-6 md:grid-cols-2">
-          {/* Player’s Table */}
-          <section className="rounded-2xl border border-white/20 bg-white/[0.04] p-4">
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-xl font-semibold">
-                {self ? `Your Table (${self.table.length}/9)` : 'Room tables'}
-              </h2>
-              {targetForAction && (
-                <p className="text-sm text-amber-100">
-                  {targetForAction === 'CONCEAL'
-                    ? 'Choose one of your revealed cards.'
-                    : `Choose a card on an opponent's Table${targetForAction === 'REVEAL' ? ' that is concealed' : ''}.`}
-                </p>
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              {interrupt ? (
+                <>
+                  <Chip className="text-amber-100" title="Turn timer paused during an interrupt">Turn paused</Chip>
+                  <span className="flex items-center gap-1.5 text-xs text-amber-100">
+                    <span className="font-mono text-sm tabular-nums" data-testid="appeal-timer">{interruptSeconds ?? 0}s</span>
+                    <span className="text-white/50">appeal</span>
+                  </span>
+                </>
+              ) : (
+                <span className="flex items-center gap-2">
+                  <span
+                    className={`hidden h-1 w-20 overflow-hidden rounded-full bg-white/15 sm:inline-block ${urgentTimer ? 'motion-safe:animate-pulse-soft' : ''}`}
+                    aria-hidden="true"
+                  >
+                    <span className="block h-full bg-white transition-[width] duration-300" style={{ width: `${turnPct}%` }} />
+                  </span>
+                  <span className="font-mono text-sm tabular-nums" data-testid="turn-timer">
+                    {data.paused
+                      ? frozenTurnSeconds === null ? 'frozen' : `${frozenTurnSeconds}s frozen`
+                      : turnSeconds === null ? '--' : `${turnSeconds}s`}
+                  </span>
+                </span>
               )}
-              {!targetForAction && isOwnTableInteractive && (
-                <p className="text-xs text-white/45">Tap two slots to move or swap · drag to rearrange (local only)</p>
+              <Chip>Deck {data.deckCount}</Chip>
+              {self && <Chip>Sets {setCount}/3</Chip>}
+              {isHost && data.phase === 'playing' && !data.paused && (
+                <Button size="sm" variant="secondary" onClick={() => send({ t: 'pause' })}>Pause</Button>
+              )}
+              {isHost && data.paused && (
+                <Button size="sm" variant="primary" onClick={() => send({ t: 'resume' })}>Resume</Button>
               )}
             </div>
-            {self && renderTable(self.id, self.table)}
-            <div className="mt-4 flex flex-wrap gap-2">
-              {showPlaceButton && (
-                <button type="button" className={buttonClass} disabled={movePending} onClick={moveSelectedHandToTable}>
-                  Move Selected to Table
-                </button>
-              )}
-              {showToHandButton && (
-                <button type="button" className={buttonClass} disabled={movePending} onClick={moveSelectedTableCardToHand}>
-                  Move Selected to Hand
-                </button>
-              )}
+          </div>
+        </Panel>
+
+        {/* Errors must be the single role=alert on the board. */}
+        {error && <p className="mb-3 text-center text-sm text-rose-300" role="alert">{error}</p>}
+        {data.lastInterruptResult && (
+          <p className="mb-3 text-center text-sm text-amber-100" role="status">
+            {data.lastInterruptResult.kind} {data.lastInterruptResult.outcome === 'appealed' ? 'was appealed' : 'resolved'}.
+          </p>
+        )}
+
+        {/* Action targeting step indicator (non-blocking: the board stays live). */}
+        {targetForAction && (
+          <Panel padding="compact" className="mb-3 flex flex-wrap items-center justify-between gap-3 border-white/25">
+            <div>
+              <p className="text-xs tracking-[0.12em] text-white/50">1 Choose player → 2 Choose card</p>
+              <p className="text-sm text-amber-100">
+                {targetForAction === 'CONCEAL'
+                  ? 'Choose one of your revealed cards.'
+                  : `Choose a card on an opponent's Table${targetForAction === 'REVEAL' ? ' that is concealed' : ''}.`}
+              </p>
+            </div>
+            <Button size="sm" variant="secondary" onClick={() => { setSelectedHandId(null); setTableSelection(null); }}>Cancel</Button>
+          </Panel>
+        )}
+
+        {/* Interrupt non-blocking notice */}
+        {interrupt && !showAppealSheet && (
+          <p className="mb-3 flex items-center justify-center gap-2 text-sm text-white/60" role="status">
+            {view.role === 'player' && isEligible && !appealCard
+              ? 'No APPEAL in Hand · passing automatically'
+              : `Waiting on a decision…${data.paused ? ' (paused)' : ''}`}
+            <SpinnerDots className="text-white/40" />
+          </p>
+        )}
+
+        {/* Opponents rail */}
+        {opponents.length > 0 && (
+          <section aria-label="Other players" className="mb-4">
+            <div className="flex gap-3 overflow-x-auto pb-1 md:grid md:grid-cols-3 md:overflow-visible lg:grid-cols-4">
+              {opponents.map((player) => {
+                const isActive = player.id === data.activePlayerId;
+                return (
+                  <Panel
+                    key={player.id}
+                    padding="compact"
+                    className={`relative min-w-[168px] shrink-0 ${isActive ? 'ring-1 ring-white/30' : ''}`}
+                  >
+                    {isActive && !data.paused && (
+                      <span aria-hidden="true" className="pointer-events-none absolute inset-0 rounded-[var(--radius-panel)] ring-1 ring-white/25 motion-safe:animate-pulse-soft" />
+                    )}
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2 text-left"
+                      aria-label={`View ${player.name}'s table`}
+                      onClick={() => setSelectedOpponentId(player.id)}
+                    >
+                      <ConnectionDot connected={player.connected} />
+                      <span className="min-w-0 flex-1 truncate text-sm font-medium">{player.name}</span>
+                      {player.away && <Badge tone="warn">Away</Badge>}
+                      {isActive && <Badge tone="accent">Turn</Badge>}
+                    </button>
+                    <div className="my-2 flex items-center gap-1.5">
+                      <Chip>Table {player.table.length}</Chip>
+                    </div>
+                    <div className="flex justify-center">{renderTable(player.id, player.table, 'xs')}</div>
+                  </Panel>
+                );
+              })}
             </div>
           </section>
+        )}
 
-          {/* Player’s Hand */}
-          {view.role === 'player' && (
-            <section className="rounded-2xl border border-white/20 bg-white/[0.04] p-4">
-              <h2 className="mb-3 text-xl font-semibold">Your Hand ({hand.length})</h2>
-              <div className="flex flex-wrap justify-center gap-3" data-hand-drop>
-                {hand.map((card) => (
-                  <button
-                    key={card.id}
-                    type="button"
-                    disabled={!actionReady}
-                    aria-label={`Select ${card.kind === 'action' ? card.action : card.kind === 'teal' ? 'TEAL wild' : 'Normal'} card`}
-                    onClick={() => {
-                      if (consumeClickSuppression()) return;
-                      setTableSelection(null);
-                      setSelectedHandId((current) => current === card.id ? null : card.id);
-                    }}
-                    onPointerDown={(event) => {
-                      if (card.kind === 'normal' || card.kind === 'teal') beginPointer(event, card.id, 'hand', null);
-                    }}
-                    className={`touch-none rounded-xl ${drag?.cardId === card.id ? 'opacity-40' : ''}`}
-                  >
-                    <CardComponent
-                      card={toUiCard(card)}
-                      isSelectable={actionReady}
-                      isSelected={selectedHandId === card.id}
-                      isDragging={drag?.cardId === card.id}
-                    />
-                  </button>
-                ))}
-                {hand.length === 0 && <p className="py-5 text-white/60">No cards in Hand.</p>}
-              </div>
-              {selectedHand?.kind === 'action' && selectedHand.action === 'APPEAL' && (
-                <p className="mt-3 text-center text-sm text-white/60">APPEAL can only be played during an eligible interrupt.</p>
+        {/* Main area */}
+        <section className="grid gap-4 md:grid-cols-[minmax(0,1fr)_340px]">
+          {view.role === 'player' && self ? (
+            <Panel className={`relative ${isMyTurn ? 'ring-1 ring-white/25' : ''}`} aria-labelledby="own-table-title">
+              {isMyTurn && !data.paused && (
+                <span aria-hidden="true" className="pointer-events-none absolute inset-0 rounded-[var(--radius-panel)] ring-1 ring-white/25 motion-safe:animate-pulse-soft" />
               )}
-              {selectedHand?.kind === 'normal' || selectedHand?.kind === 'teal' ? (
-                <p className="mt-3 text-center text-sm text-white/60">Select an empty Table slot to place this card, or a card to swap when your Table is full.</p>
-              ) : null}
-            </section>
-          )}
-        </div>
-      </section>
-
-      <section className="mx-auto mb-7 flex max-w-6xl flex-wrap justify-center gap-3" aria-label="Turn controls">
-        {pending && <p role="status" className="w-full text-center text-sm text-amber-100">{pending}</p>}
-        {!pending && confirmation && <p role="status" className="w-full text-center text-sm text-teal-200">{confirmation}</p>}
-        {view.role === 'player' && actionReady && (
-          <button type="button" className={buttonClass} disabled={Boolean(self && self.table.length > 9) || Boolean(targetForAction)} onClick={() => send({ t: 'endTurn' })}>
-            End turn
-          </button>
-        )}
-        {view.role === 'spectator' && (
-          <form className="flex flex-wrap items-end justify-center gap-2" onSubmit={(event) => { event.preventDefault(); requestRejoin(); }}>
-            <label className="text-sm">
-              <span className="mb-1 block">Request to rejoin as</span>
-              <input
-                value={rejoinName}
-                onChange={(event) => setRejoinName(event.target.value.slice(0, 24))}
-                maxLength={24}
-                className="h-11 rounded-lg border border-white/25 bg-black px-3"
-                placeholder="Player name"
-              />
-            </label>
-            <button type="submit" className={buttonClass}>Request rejoin</button>
-          </form>
-        )}
-      </section>
-
-      <section className="mx-auto grid max-w-6xl gap-4 md:grid-cols-2" aria-label="Other players">
-        {data.players.filter((player) => player.id !== selfId).map((player) => (
-          <article key={player.id} className="rounded-xl border border-white/20 p-4">
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-lg font-semibold">{player.name}</h2>
-              {isHost && <button type="button" className="text-xs underline" onClick={() => send({ t: 'kick', targetId: player.id })}>Kick</button>}
-            </div>
-            {renderTable(player.id, player.table)}
-          </article>
-        ))}
-      </section>
-
-      {data.phase === 'finished' && (
-        <section className="mx-auto mt-7 max-w-6xl rounded-2xl border border-teal-200/40 bg-teal-100/5 p-5 text-center">
-          <h2 className="text-2xl font-bold">Game over</h2>
-          <p className="my-2">{winner?.name} wins.</p>
-
-          {/* Show the winning sets */}
-          <div className="mt-4">
-            <h3 className="text-lg font-semibold mb-3">Winning Sets:</h3>
-            {winnerSets && (
-              <div className="grid gap-4 md:grid-cols-3 mb-4">
-                {winnerSets.map((group, setIndex) => (
-                  <div key={`set-${setIndex}`} className="flex items-center justify-center gap-2 p-3 rounded-lg bg-white/[0.03] border border-white/10">
-                    {group.map((card, cardIndex) => (
-                      <CardComponent key={`${card.id}-${cardIndex}`} card={toUiCard(card, true)} showRevealBadge={false} />
-                    ))}
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <h2 id="own-table-title" className="flex items-center gap-2 text-lg font-semibold">
+                  Your Table{" "}
+                  <Chip>{self.table.length}/9</Chip>
+                </h2>
+                <details className="relative">
+                  <summary
+                    className="flex h-11 w-11 cursor-pointer list-none items-center justify-center rounded-full border border-line text-white/60 transition hover:border-white/40 hover:text-white"
+                    aria-label="Table controls help"
+                  >
+                    <span aria-hidden="true">i</span>
+                  </summary>
+                  <div className="absolute right-0 z-20 mt-2 w-60 rounded-[var(--radius-control)] border border-line bg-black/95 p-3 text-xs text-white/70 shadow-xl">
+                    Tap two slots to swap · drag to rearrange (local only). Sets you complete are outlined.
                   </div>
-                ))}
+                </details>
               </div>
-            )}
-            <p className="text-sm text-white/60">
-              Each group shows a set of 3 matching cards (by color, number, or shape)
-            </p>
-          </div>
 
-          <div className="mt-6 flex flex-wrap justify-center gap-3">
-            {isHost && <button type="button" className={buttonClass} onClick={() => send({ t: 'rematch' })}>Rematch</button>}
-            <button type="button" className={`${buttonClass} bg-white/[0.04] border-white/20 hover:bg-white/[0.08]`} onClick={onReturnToLobby}>Return to Lobby</button>
-            <button type="button" className={`${buttonClass} bg-white/[0.04] border-white/20 hover:bg-white/[0.08]`} onClick={onLeave}>Main Page</button>
-          </div>
+              <div className="flex justify-center">{renderTable(self.id, self.table, compact ? 'sm' : 'md', setIds)}</div>
+
+              {!hintDismissed && (
+                <div className="mt-3 flex items-center justify-between gap-3 rounded-[var(--radius-control)] border border-line bg-white/[0.02] px-3 py-2 text-xs text-white/60">
+                  <span>Tap two slots to swap · drag to rearrange (local only)</span>
+                  <button type="button" className="text-white/50 underline hover:text-white" onClick={dismissHint}>Got it</button>
+                </div>
+              )}
+
+              {(showPlaceButton || showToHandButton) && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {showPlaceButton && (
+                    <Button size="sm" disabled={movePending} onClick={moveSelectedHandToTable}>Move Selected to Table</Button>
+                  )}
+                  {showToHandButton && (
+                    <Button size="sm" disabled={movePending} onClick={moveSelectedTableCardToHand}>Move Selected to Hand</Button>
+                  )}
+                </div>
+              )}
+            </Panel>
+          ) : (
+            <Panel className="flex flex-col items-center justify-center gap-3 py-10 text-center">
+              <p className="text-sm text-white/60">Spectating — you see the same public view as opponents.</p>
+              <form
+                className="flex flex-wrap items-end justify-center gap-2"
+                onSubmit={(event) => { event.preventDefault(); requestRejoin(); }}
+              >
+                <label className="text-left text-sm">
+                  <span className="mb-1 block text-white/60">Request to rejoin as</span>
+                  <input
+                    value={rejoinName}
+                    onChange={(event) => setRejoinName(event.target.value.slice(0, 24))}
+                    maxLength={24}
+                    aria-label="Request to rejoin as"
+                    className="h-11 rounded-[var(--radius-control)] border border-line bg-white/[0.03] px-3"
+                    placeholder="Player name"
+                  />
+                </label>
+                <Button type="submit" variant="secondary">Request rejoin</Button>
+              </form>
+            </Panel>
+          )}
+
+          {/* Hand dock (mobile: fixed bottom; desktop: right column). */}
+          {view.role === 'player' && (
+            <Panel
+              padding="compact"
+              className="fixed inset-x-0 bottom-0 z-30 rounded-b-none border-x-0 border-b-0 bg-black md:static md:z-auto md:rounded-[var(--radius-panel)] md:border-x md:border-b"
+            >
+              <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-2">
+                <h2 className="flex items-center gap-2 text-base font-semibold">
+                  Your Hand{" "}
+                  <Chip>({hand.length})</Chip>
+                </h2>
+                <div className="ml-auto flex items-center gap-2">
+                  {view.role === 'player' && actionReady && (
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      disabled={Boolean(self && self.table.length > 9) || Boolean(targetForAction)}
+                      title={self && self.table.length > 9 ? 'Move extra Table cards to Hand first.' : undefined}
+                      onClick={() => send({ t: 'endTurn' })}
+                    >
+                      End turn
+                    </Button>
+                  )}
+                  <button
+                    type="button"
+                    className="flex items-center gap-1 rounded-full border border-line px-3 py-1 text-xs text-white/60 transition hover:text-white md:hidden"
+                    aria-expanded={handOpen}
+                    onClick={() => setHandOpen((open) => !open)}
+                  >
+                    {handOpen ? 'Hide' : 'Show'}
+                    <span aria-hidden="true">{handOpen ? '▾' : '▴'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {(pending || confirmation) && (
+                <div className="mt-1 text-xs">
+                  {pending && <span role="status" className="text-amber-100">{pending}</span>}
+                  {!pending && confirmation && <span role="status" className="text-emerald-300">{confirmation}</span>}
+                </div>
+              )}
+
+              {handOpen && (
+                <div
+                  data-hand-drop
+                  className="mt-1 flex gap-2 overflow-x-auto pb-1 md:flex-wrap md:justify-start md:overflow-visible"
+                >
+                  {hand.length === 0 && <p className="py-3 text-sm text-white/50">No cards in Hand.</p>}
+                  {handNormals.map((card) => (
+                    <button
+                      key={card.id}
+                      type="button"
+                      disabled={!actionReady}
+                      aria-label={`Select ${card.kind === 'teal' ? 'TEAL wild' : 'Normal'} card`}
+                      onClick={() => {
+                        if (consumeClickSuppression()) return;
+                        setTableSelection(null);
+                        setSelectedHandId((current) => current === card.id ? null : card.id);
+                      }}
+                      onPointerDown={(event) => {
+                        if (card.kind === 'normal' || card.kind === 'teal') beginPointer(event, card.id, 'hand', null);
+                      }}
+                      className={`shrink-0 touch-none rounded-[var(--radius-control)] motion-safe:animate-card-in ${drag?.cardId === card.id ? 'opacity-40' : ''}`}
+                    >
+                      <CardComponent
+                        card={toUiCard(card)}
+                        size={compact ? 'sm' : 'md'}
+                        isSelectable={actionReady}
+                        isSelected={selectedHandId === card.id}
+                        isDragging={drag?.cardId === card.id}
+                        showRevealBadge={data.phase !== 'finished'}
+                      />
+                    </button>
+                  ))}
+                  {handActions.length > 0 && (
+                    <>
+                      <span className="flex shrink-0 flex-col items-center justify-center gap-1 px-1 text-[10px] tracking-[0.14em] text-white/40" aria-hidden="true">
+                        <span className="h-8 w-px bg-white/15" />
+                        Action
+                      </span>
+                      {handActions.map((card) => (
+                        <button
+                          key={card.id}
+                          type="button"
+                          disabled={!actionReady}
+                          aria-label={`Select ${card.action} card`}
+                          onClick={() => {
+                            if (consumeClickSuppression()) return;
+                            setTableSelection(null);
+                            setSelectedHandId((current) => current === card.id ? null : card.id);
+                          }}
+                          className={`shrink-0 touch-none rounded-[var(--radius-control)] motion-safe:animate-card-in ${drag?.cardId === card.id ? 'opacity-40' : ''}`}
+                        >
+                          <CardComponent
+                            card={toUiCard(card)}
+                            size={compact ? 'sm' : 'md'}
+                            isSelectable={actionReady}
+                            isSelected={selectedHandId === card.id}
+                            showRevealBadge={data.phase !== 'finished'}
+                          />
+                        </button>
+                      ))}
+                    </>
+                  )}
+                </div>
+              )}
+
+              {handNormals.length > 0 && handActions.length > 0 && (
+                <p className="mt-1 hidden text-[11px] text-white/40 md:block">Normal/TEAL cards return to the deck at turn end.</p>
+              )}
+              {selectedHand?.kind === 'action' && selectedHand.action === 'APPEAL' && (
+                <p className="mt-2 text-xs text-white/60">APPEAL can only be played during an eligible interrupt.</p>
+              )}
+            </Panel>
+          )}
         </section>
-      )}
 
-      {rejoinRequests.length > 0 && isHost && (
-        <section className="mx-auto mt-7 max-w-6xl rounded-xl border border-white/20 p-4">
-          <h2 className="mb-3 text-lg font-semibold">Rejoin requests</h2>
-          {rejoinRequests.map((request) => (
-            <div key={request.requestId} className="flex items-center justify-between gap-3 py-2">
-              <span>{request.name} wants to rejoin.</span>
-              <div className="flex gap-2">
-                <button type="button" className={buttonClass} onClick={() => send({ t: 'rejoinDecision', requestId: request.requestId, accept: true })}>Approve</button>
-                <button type="button" className={buttonClass} onClick={() => send({ t: 'rejoinDecision', requestId: request.requestId, accept: false })}>Decline</button>
+        {/* Game over */}
+        {data.phase === 'finished' && (
+          <Panel padding="roomy" className="relative mt-5 overflow-hidden text-center">
+            <h2 className="text-2xl font-semibold">Game over</h2>
+            <p className="my-2 text-lg">{winner?.name ?? 'A player'} wins</p>
+
+            <div className="mt-4">
+              <h3 className="mb-3 text-sm font-semibold text-white/70">Winning sets</h3>
+              {winnerSets && (
+                <div className="mb-4 grid gap-4 md:grid-cols-3">
+                  {winnerSets.map((group, setIndex) => (
+                    <div key={`set-${setIndex}`} className="rounded-[var(--radius-control)] border border-line bg-white/[0.03] p-3">
+                      <p className="mb-2 text-xs tracking-[0.12em] text-white/50">Set {setIndex + 1}</p>
+                      <div className="flex items-center justify-center gap-2">
+                        {group.map((card, cardIndex) => (
+                          <span key={`${card.id}-${cardIndex}`} className="inline-flex motion-safe:animate-pop-in">
+                            <CardComponent
+                              card={toUiCard(card, true)}
+                              size={group.length > 3 ? 'sm' : 'md'}
+                              showRevealBadge={false}
+                            />
+                          </span>
+                        ))}
+                        {group.length === 0 && <span className="py-6 text-sm text-white/40">—</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p className="text-sm text-white/60">Each group shows a set of 3 matching cards (by color, number, or shape).</p>
+            </div>
+
+            <div className="mt-6 flex flex-wrap justify-center gap-3">
+              {isHost && <Button variant="secondary" onClick={() => send({ t: 'rematch' })}>Rematch</Button>}
+              <Button variant="primary" onClick={onReturnToLobby}>Return to Lobby</Button>
+              <Button variant="ghost" onClick={onLeave}>Main Page</Button>
+            </div>
+          </Panel>
+        )}
+
+        {/* Rejoin requests (host) */}
+        {rejoinRequests.length > 0 && isHost && (
+          <Panel padding="roomy" className="mt-5">
+            <h2 className="mb-3 text-sm font-semibold text-white/70">Rejoin requests</h2>
+            {rejoinRequests.map((request) => (
+              <div key={request.requestId} className="flex items-center justify-between gap-3 py-2">
+                <span>{request.name} wants to rejoin.</span>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="primary" onClick={() => send({ t: 'rejoinDecision', requestId: request.requestId, accept: true })}>Approve</Button>
+                  <Button size="sm" variant="ghost" onClick={() => send({ t: 'rejoinDecision', requestId: request.requestId, accept: false })}>Decline</Button>
+                </div>
+              </div>
+            ))}
+          </Panel>
+        )}
+      </div>
+
+      {/* Appeal bottom sheet (non-modal: it never blocks the rest of the board). */}
+      {showAppealSheet && interrupt && appealCard && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex justify-center p-3 sm:p-6">
+          <Panel padding="roomy" className="pointer-events-auto w-full max-w-md bg-black/95 shadow-2xl">
+            <div className="flex items-start gap-4">
+              <div className="shrink-0">
+                <CardComponent card={toUiCard(appealCard)} size="sm" showRevealBadge={false} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold">Play APPEAL?</p>
+                <p className="mt-1 text-sm text-white/60">
+                  Someone played {interrupt.kind}. APPEAL cancels it; both cards return to the deck.
+                </p>
+                <div className="mt-3 flex items-center gap-3">
+                  <AppealRing seconds={interruptSeconds} paused={data.paused} />
+                  <span className="text-xs text-white/50">{data.paused ? 'Paused — frozen' : 'seconds to decide'}</span>
+                </div>
               </div>
             </div>
-          ))}
-        </section>
+            <div className="mt-4 flex gap-2">
+              <Button
+                variant="primary"
+                size="lg"
+                className="flex-1"
+                disabled={data.paused}
+                onClick={() => send({ t: 'appeal', cardId: appealCard.id })}
+              >
+                {data.paused ? 'APPEAL (Paused)' : 'APPEAL'}
+              </Button>
+              <Button
+                variant="secondary"
+                size="lg"
+                className="flex-1"
+                disabled={data.paused}
+                onClick={() => send({ t: 'pass' })}
+              >
+                {data.paused ? 'Pass (Paused)' : 'Pass'}
+              </Button>
+            </div>
+          </Panel>
+        </div>
       )}
 
-      {isHost && data.spectators.length > 0 && (
-        <section className="mx-auto mt-5 max-w-6xl text-sm text-white/60">
-          Spectators: {data.spectators.map((spectator) => (
-            <span key={spectator.id} className="ml-2">
-              {spectator.name}{' '}
-              <button type="button" className="underline" onClick={() => send({ t: 'kick', targetId: spectator.id })}>Kick</button>
-            </span>
-          ))}
-        </section>
+      {/* Opponent table modal */}
+      {selectedOpponent && (
+        <div
+          className="fixed inset-0 z-[200] overflow-y-auto bg-black/80 p-4 backdrop-blur-sm sm:p-8"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${selectedOpponent.name}'s table`}
+        >
+          <Panel
+            ref={opponentDialogRef}
+            padding="roomy"
+            className="mx-auto max-w-lg bg-black/90 shadow-2xl"
+          >
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <h2 className="flex items-center gap-2 text-lg font-semibold">
+                {selectedOpponent.name}
+                {selectedOpponent.away && <Badge tone="warn">Away</Badge>}
+              </h2>
+              <div className="flex items-center gap-2">
+                {isHost && selectedOpponent.id !== selfId && (
+                  <details className="relative">
+                    <summary className="flex h-11 w-11 cursor-pointer list-none items-center justify-center rounded-full border border-line text-white/70 hover:text-white" aria-label="Player actions">⋯</summary>
+                    <div className="absolute right-0 z-10 mt-2 rounded-[var(--radius-control)] border border-line bg-black/95 p-1">
+                      <Button size="sm" variant="danger" onClick={() => { send({ t: 'kick', targetId: selectedOpponent.id }); setSelectedOpponentId(null); }}>Kick player</Button>
+                    </div>
+                  </details>
+                )}
+                <IconButton label="Close table" onClick={() => setSelectedOpponentId(null)}>
+                  <span aria-hidden="true" className="text-xl leading-none">×</span>
+                </IconButton>
+              </div>
+            </div>
+            <div className="flex justify-center">{renderTable(selectedOpponent.id, selectedOpponent.table, 'sm')}</div>
+            <p className="mt-4 text-center text-xs text-white/50">Revealed cards show their face; concealed cards stay face-down.</p>
+          </Panel>
+        </div>
       )}
 
+      {/* Players overlay */}
       {showPlayers && (
         <div
           className="fixed inset-0 z-[200] overflow-y-auto bg-black/80 p-4 backdrop-blur-sm sm:p-8"
@@ -723,37 +1086,44 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
           aria-modal="true"
           aria-labelledby="players-title"
         >
-          <div className="mx-auto max-w-xl rounded-2xl border border-white/10 bg-neutral-950/95 p-6 shadow-2xl">
+          <Panel
+            ref={dialogRef}
+            padding="roomy"
+            className="mx-auto max-w-xl bg-black/90 shadow-2xl"
+          >
             <div className="mb-5 flex items-center justify-between gap-4">
-              <h2 id="players-title" className="text-2xl font-bold">Players</h2>
-              <button
-                type="button"
-                onClick={() => setShowPlayers(false)}
-                aria-label="Close players"
-                className="flex h-11 w-11 items-center justify-center rounded-full border border-white/15 bg-white/[0.06] text-white/70 transition hover:border-white hover:bg-white hover:text-black"
-              >
-                <span aria-hidden="true">×</span>
-              </button>
+              <h2 id="players-title" className="text-2xl font-semibold">Players</h2>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="ghost" onClick={() => setShowRules(true)}>Rules</Button>
+                <IconButton label="Close players" onClick={() => setShowPlayers(false)}>
+                  <span aria-hidden="true" className="text-xl leading-none">×</span>
+                </IconButton>
+              </div>
             </div>
             <ul className="space-y-2">
               {data.players.map((player) => (
-                <li key={player.id} className="flex items-center justify-between gap-3 rounded-xl border border-white/15 p-3">
-                  <span>
-                    {player.name}
-                    {player.id === selfId ? ' (You)' : ''}
-                    {player.id === data.hostId && <span className="ml-2 text-xs text-teal-200">Host</span>}
+                <li key={player.id} className="flex items-center justify-between gap-3 rounded-[var(--radius-control)] border border-line p-3">
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="truncate">{player.name}</span>
+                    {player.id === selfId && <Badge>You</Badge>}
+                    {player.id === data.hostId && <Badge tone="accent">Host</Badge>}
+                    {player.away && <Badge tone="warn">Away</Badge>}
                   </span>
-                  <span className="text-sm text-white/60">
-                    Table {player.table.length}
-                    {player.id === selfId && ` · Hand ${hand.length}`}
+                  <span className="flex shrink-0 items-center gap-2 text-sm text-white/60">
+                    <Chip>Table {player.table.length}</Chip>
+                    {player.id === selfId && <Chip>Hand {hand.length}</Chip>}
                   </span>
                 </li>
               ))}
             </ul>
-          </div>
+          </Panel>
         </div>
       )}
 
+      {/* Rules overlay */}
+      {showRules && <RulesOverlay onClose={() => setShowRules(false)} />}
+
+      {/* Drag preview */}
       {drag && (() => {
         const card = cardById(drag.cardId);
         return card ? (
