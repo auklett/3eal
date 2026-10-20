@@ -7,7 +7,7 @@ interface ChipProps {
   title?: string;
 }
 
-/** A small monospace pill for room codes, timers, deck/sets counts. */
+/** A small monospace pill for room codes, timers, and deck/table counts. */
 export default function Chip({ children, className, title }: ChipProps) {
   return (
     <span

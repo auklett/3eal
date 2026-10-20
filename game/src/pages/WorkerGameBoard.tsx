@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { COLOR_HEX, countCompleteSets, type Card as EngineCard } from '@3eal/engine';
+import { COLOR_HEX, type Card as EngineCard } from '@3eal/engine';
 import CardComponent from '../components/cards/CardComponent';
 import type { CardSize } from '../components/cards/cardSize';
 import { useRoom, type SendFeedback } from '../hooks/useRoom';
 import { useDialog } from '../hooks/useDialog';
 import { useIsCompact } from '../hooks/useIsCompact';
 import { mergeTableLayout, moveOrSwap, placeInLayout, serverSlotForVisual, tableCardIds, type TableLayout } from '../logic/tableLayout';
-import { completeSetCardIds } from '../logic/sets';
 import type { Card as UiCard } from '../types';
 import type { PublicSlot, View } from '../shared/protocol';
 import Panel from '../components/ui/Panel';
@@ -279,15 +278,6 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
     pendingPlacement.current = null;
   }
 
-  const ownTableCards = self
-    ? self.table.flatMap((slot) => {
-        const card = slot.state === 'revealed' ? slot.card : ownPrivate[slot.cardId];
-        return card ? [card] : [];
-      })
-    : [];
-  const setIds = completeSetCardIds(ownTableCards);
-  const setCount = countCompleteSets(ownTableCards);
-
   const frozenTurnSeconds = data.paused && data.pauseRemaining && data.pauseRemaining.turn !== null
     ? Math.max(0, Math.ceil(data.pauseRemaining.turn / 1000))
     : null;
@@ -517,7 +507,7 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
     setHintDismissed(true);
   };
 
-  const renderTable = (playerId: string, slots: PublicSlot[], size: CardSize = 'md', highlightIds?: Set<string>) => {
+  const renderTable = (playerId: string, slots: PublicSlot[], size: CardSize = 'md') => {
     const isOwn = playerId === selfId;
     const isPlayer = view.role === 'player';
     // The owner may always rearrange locally; only spectators are inert.
@@ -552,7 +542,6 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
           // during targeting, and while paused.
           const selectable = canTarget || rearrangeReady;
           const disabled = !isPlayer;
-          const inSet = Boolean(isOwn && highlightIds && cardId && highlightIds.has(cardId));
           const baseLabel = face
             ? `${table?.name ?? 'Player'} Table card${slot?.state === 'revealed' ? ', revealed' : ', concealed'}`
             : 'Empty Table slot';
@@ -564,10 +553,10 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
               data-table-owner={playerId}
               data-card-id={cardId ?? ''}
               disabled={disabled}
-              aria-label={inSet ? `${baseLabel}, part of a set` : baseLabel}
+              aria-label={baseLabel}
               onClick={() => handleSlotClick(playerId, index, slot)}
               onPointerDown={rearrangeReady ? (event) => beginPointer(event, cardId ?? '', 'table', index) : undefined}
-              className={`${tableSlotSize(size)} touch-none rounded-[var(--radius-control)] transition ${canTarget ? 'ring-2 ring-amber-300' : ''} ${isDropTarget ? 'ring-2 ring-teal-300' : ''} ${isDraggingSource ? 'opacity-40' : ''} ${inSet ? 'outline outline-2 outline-offset-2 outline-white/40' : ''}`}
+              className={`${tableSlotSize(size)} touch-none rounded-[var(--radius-control)] transition ${canTarget ? 'ring-2 ring-amber-300' : ''} ${isDropTarget ? 'ring-2 ring-teal-300' : ''} ${isDraggingSource ? 'opacity-40' : ''}`}
             >
               <CardComponent
                 card={face ?? {
@@ -677,7 +666,6 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
                 </span>
               )}
               <Chip>Deck {data.deckCount}</Chip>
-              {self && <Chip>Sets {setCount}/3</Chip>}
               {isHost && data.phase === 'playing' && !data.paused && (
                 <Button size="sm" variant="secondary" onClick={() => send({ t: 'pause' })}>Pause</Button>
               )}
@@ -785,12 +773,12 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
                     <span aria-hidden="true">i</span>
                   </summary>
                   <div className="absolute right-0 z-20 mt-2 w-60 rounded-[var(--radius-control)] border border-line bg-black/95 p-3 text-xs text-white/70 shadow-xl">
-                    Tap two slots to swap · drag to rearrange (local only). Sets you complete are outlined.
+                    Tap two slots to swap · drag to rearrange (local only).
                   </div>
                 </details>
               </div>
 
-              <div className="flex justify-center">{renderTable(self.id, self.table, compact ? 'sm' : 'md', setIds)}</div>
+              <div className="flex justify-center">{renderTable(self.id, self.table, compact ? 'sm' : 'md')}</div>
 
               {!hintDismissed && (
                 <div className="mt-3 flex items-center justify-between gap-3 rounded-[var(--radius-control)] border border-line bg-white/[0.02] px-3 py-2 text-xs text-white/60">
