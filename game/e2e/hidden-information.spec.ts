@@ -79,28 +79,49 @@ function makeViews(aliceConcealed: Set<string> = new Set()): { alice: View; bob:
   };
 }
 
-async function mockRoom(page: Page, view: View, observed: string[], nextView?: View): Promise<void> {
+async function mockRoom(
+  page: Page,
+  view: View,
+  observed: string[],
+  nextView?: View
+): Promise<(() => void) | null> {
   await page.route('**/api/config', (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({ turnstileSiteKey: '', webAnalyticsToken: '' })
   }));
+  let sendNext: ((message: string) => void) | null = null;
+  let joined = false;
+  let nextSent = false;
+  let nextRequested = false;
+
+  const deliverNext = () => {
+    if (!nextView || !nextRequested || nextSent || !joined || !sendNext) return;
+    nextSent = true;
+    const followUp = JSON.stringify({ t: 'view', view: nextView } satisfies ServerMsg);
+    sendNext(followUp);
+    observed.push(followUp);
+  };
+
   await page.routeWebSocket(/\/api\/rooms\/ABCD\/ws$/, (webSocket) => {
+    joined = false;
+    sendNext = (message) => webSocket.send(message);
     webSocket.onMessage((message) => {
       if (typeof message !== 'string') return;
       const parsed: unknown = JSON.parse(message);
       if (typeof parsed !== 'object' || parsed === null || !('t' in parsed) || parsed.t !== 'join') return;
+      joined = true;
       webSocket.send(JSON.stringify({ t: 'view', view } satisfies ServerMsg));
       observed.push(JSON.stringify({ t: 'view', view } satisfies ServerMsg));
-      if (nextView) {
-        const followUp = JSON.stringify({ t: 'view', view: nextView } satisfies ServerMsg);
-        setTimeout(() => {
-          webSocket.send(followUp);
-          observed.push(followUp);
-        }, 60);
-      }
+      // If the test requested the follow-up before this page joined, deliver it
+      // now that the initial snapshot has been sent.
+      deliverNext();
     });
   });
+  return nextView ? () => {
+    nextRequested = true;
+    deliverNext();
+  } : null;
 }
 
 async function openPages(browser: Browser, views: ReturnType<typeof makeViews>, nextViews?: ReturnType<typeof makeViews>) {
@@ -111,12 +132,16 @@ async function openPages(browser: Browser, views: ReturnType<typeof makeViews>, 
   const aliceFrames: string[] = [];
   const bobFrames: string[] = [];
   const spectatorFrames: string[] = [];
+  const nextSenders: Array<() => void> = [];
 
-  await Promise.all([
+  const mocks = await Promise.all([
     mockRoom(alicePage, views.alice, aliceFrames, nextViews?.alice),
     mockRoom(bobPage, views.bob, bobFrames, nextViews?.bob),
     mockRoom(spectatorPage, views.spectator, spectatorFrames, nextViews?.spectator)
   ]);
+  for (const sender of mocks) {
+    if (sender) nextSenders.push(sender);
+  }
 
   await Promise.all([
     alicePage.addInitScript(({ name, sessionId }) => {
@@ -139,7 +164,18 @@ async function openPages(browser: Browser, views: ReturnType<typeof makeViews>, 
     spectatorPage.goto('/game/ABCD')
   ]);
 
-  return { context, alicePage, bobPage, spectatorPage, aliceFrames, bobFrames, spectatorFrames };
+  return {
+    context,
+    alicePage,
+    bobPage,
+    spectatorPage,
+    aliceFrames,
+    bobFrames,
+    spectatorFrames,
+    sendNextViews: () => {
+      for (const send of nextSenders) send();
+    }
+  };
 }
 
 test('at game start, hands stay private while every starting Table card is visible to opponents and spectators', async ({ browser }) => {
@@ -150,7 +186,10 @@ test('at game start, hands stay private while every starting Table card is visib
     expect(alicePage.getByText('Your Hand (1)')).toBeVisible(),
     expect(bobPage.getByText('Your Hand (1)')).toBeVisible(),
     expect(spectatorPage.getByText('Your Hand (1)')).toHaveCount(0),
-    expect(spectatorPage.getByText('Request to rejoin as')).toBeVisible()
+    expect(spectatorPage.getByText('Request to rejoin as')).toBeVisible(),
+    expect.poll(() => aliceFrames.length).toBeGreaterThanOrEqual(1),
+    expect.poll(() => bobFrames.length).toBeGreaterThanOrEqual(1),
+    expect.poll(() => spectatorFrames.length).toBeGreaterThanOrEqual(1)
   ]);
 
   expect(aliceFrames).toHaveLength(1);
@@ -180,25 +219,43 @@ test('at game start, hands stay private while every starting Table card is visib
 test('a card concealed after the start disappears from opponents and spectators', async ({ browser }) => {
   const views = makeViews();
   const concealed = makeViews(new Set(['alice-start-1']));
-  const { context, bobPage, spectatorPage, bobFrames, spectatorFrames } = await openPages(browser, views, concealed);
+  const { context, bobPage, spectatorPage, bobFrames, spectatorFrames, sendNextViews } = await openPages(browser, views, concealed);
 
-  // Wait for the initial (revealed) snapshot to arrive and render.
-  await expect(bobPage.getByLabel('Revealed to all players').first()).toBeVisible();
+  // Every page joins on its own schedule. Wait until both viewers have rendered
+  // their first snapshot (and captured its frame) before reading the arrays;
+  // waiting only for Bob can race with the spectator's page load.
+  await Promise.all([
+    expect(bobPage.getByLabel('Revealed to all players').first()).toBeVisible(),
+    expect(spectatorPage.getByText('Request to rejoin as')).toBeVisible(),
+    expect.poll(() => bobFrames.length).toBeGreaterThanOrEqual(1),
+    expect.poll(() => spectatorFrames.length).toBeGreaterThanOrEqual(1)
+  ]);
 
-  // Before the conceal, Alice's first card was public.
+  // Before the conceal, Alice's first card was public to both viewers.
   expect(bobFrames[0]).toContain('"color":"periwinkle"');
   expect(spectatorFrames[0]).toContain('"color":"periwinkle"');
+
+  // The mock only sends the conceal after both initial snapshots are in hand,
+  // so this cannot overtake the assertions above on a slow CI worker.
+  sendNextViews();
 
   // After the conceal resolves, the card is face-down to both viewers.
   await expect(bobPage.getByLabel('Concealed card')).toHaveCount(1);
   await expect(spectatorPage.getByLabel('Concealed card')).toHaveCount(1);
-  await expect
-    .poll(() => bobFrames.length)
-    .toBeGreaterThanOrEqual(2);
-  expect(bobFrames.at(-1)).toContain('"cardId":"alice-start-1"');
-  expect(bobFrames.at(-1)).not.toContain('"color":"periwinkle"');
-  expect(spectatorFrames.at(-1)).toContain('"cardId":"alice-start-1"');
-  expect(spectatorFrames.at(-1)).not.toContain('"color":"periwinkle"');
+  await Promise.all([
+    expect.poll(() => bobFrames.length).toBeGreaterThanOrEqual(2),
+    expect.poll(() => spectatorFrames.length).toBeGreaterThanOrEqual(2)
+  ]);
+  for (const frame of bobFrames.slice(1)) {
+    expect(frame).toContain('"cardId":"alice-start-1"');
+    expect(frame).toContain('"state":"concealed"');
+    expect(frame).not.toContain('"color":"periwinkle"');
+  }
+  for (const frame of spectatorFrames.slice(1)) {
+    expect(frame).toContain('"cardId":"alice-start-1"');
+    expect(frame).toContain('"state":"concealed"');
+    expect(frame).not.toContain('"color":"periwinkle"');
+  }
 
   await context.close();
 });

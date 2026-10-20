@@ -114,16 +114,22 @@ test('a direct link to a missing room shows "Room not found", not "Reconnectingâ
 });
 
 test('a genuine drop inside a valid room still shows Reconnectingâ€¦', async ({ page }) => {
+  let closeSocket: () => void = () => {};
   await page.routeWebSocket(/\/api\/rooms\/ABCD\/ws$/, (webSocket) => {
+    closeSocket = () => webSocket.close();
     webSocket.onMessage((message) => {
       if (typeof message !== 'string') return;
       if (!message.includes('"t":"join"')) return;
       webSocket.send(JSON.stringify({ t: 'view', view: playerView({ phase: 'lobby', activePlayerId: null, reveal: false }) }));
-      setTimeout(() => webSocket.close(), 50);
     });
   });
 
   await page.goto('/lobby/ABCD');
+
+  // Wait until the first snapshot has rendered before dropping the socket, so
+  // the reconnect path is exercised deterministically instead of racing a timer.
+  await expect(page.getByRole('heading', { name: 'Players (2)' })).toBeVisible();
+  closeSocket();
 
   await expect(page.getByText(/Reconnecting/)).toBeVisible();
   await expect(page.getByText('Room not found')).toHaveCount(0);
