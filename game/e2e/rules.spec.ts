@@ -38,8 +38,12 @@ test('the Rules overlay shows the visual sections, set examples, and corrected a
   await expect(dialog).toBeVisible();
 
   // The set-example chips name every pattern, including the non-set.
-  for (const chip of ['All Rose', 'All 5', 'All pentagons', 'TEAL = 4', 'Nothing matches']) {
+  for (const chip of ['Same Color (ex. All Rose)', 'Same Number (ex. All 5)', 'Same Shape (ex. All pentagons)', 'Wild Card (ex. TEAL = 4)', 'Nothing matches']) {
     await expect(dialog.getByText(chip, { exact: true })).toBeVisible();
+  }
+  // Each card type is named above its example card.
+  for (const name of ['Normal', 'Teal Wild', 'Action']) {
+    await expect(dialog.getByText(name, { exact: true })).toBeVisible();
   }
   // Real card components are used for the examples.
   await expect(dialog.getByLabel('Coral 1 circle').first()).toBeVisible();

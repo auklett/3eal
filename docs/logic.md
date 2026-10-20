@@ -180,8 +180,8 @@ A set of 3 Table cards is valid if it meets **at least one** of these patterns:
 - Requires exactly 3 cards per set, and exactly 3 disjoint sets covering all 9 Table cards to win.
 - Checks all 3 patterns — any single match validates a set.
 - **Resolved (previously an open question):** earlier drafts worried about a tie-break for "the" completed set when multiple valid groupings exist. That question only mattered for *protecting* set cards from STEAL — and since STEAL can already target any Table card regardless of set membership (see the zones/visibility rules in `rules.md`), there's nothing left to protect, so no tie-break is needed for correctness.
-  - `checkWinCondition()` only needs to confirm *some* valid partition of the 9 Table cards into 3 sets exists — an existence check, not an identification of specific groupings.
-  - Mid-game progress display (e.g. "2/3 sets" on the Players overlay) only needs a count — `completeSetCount()` finds the maximum number of disjoint valid sets in the current Table via a greedy/max-matching search. Which exact cards land in which set doesn't need to be pinned down before the win moment.
+  - `findWinningPartition()` only needs to confirm *some* valid partition of the 9 Table cards into 3 sets exists — an existence check, not an identification of specific groupings.
+  - The win check is server-authoritative: it runs in the room reducer at end of turn, never in the browser. Clients receive no set-progress data during play and do not compute set validity or set counts.
   - The pure shared engine searches all 280 ways to partition nine cards into three sets and accepts any valid partition. At the winning turn it records the partition it found in `winningSets` (each set as an array of card IDs), which is persisted and included in the public Game Over snapshot so every client renders the same three groups.
 
 ## 6. Implementation Files

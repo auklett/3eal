@@ -81,9 +81,9 @@ function StepIcon({ name }: { name: 'draw' | 'play' | 'act' | 'end' }) {
 }
 
 const TYPES = [
-  { card: typeExamples[0], count: '175', caption: 'Five colors, numbers and shapes.' },
-  { card: typeExamples[1], count: '3', caption: 'Always Teal. Any number or shape.' },
-  { card: typeExamples[2], count: '40', caption: 'Play them during a turn.' }
+  { card: typeExamples[0], name: 'Normal', count: '175', caption: 'Five colors, numbers and shapes.' },
+  { card: typeExamples[1], name: 'Teal Wild', count: '3', caption: 'Always Teal. Any number or shape.' },
+  { card: typeExamples[2], name: 'Action', count: '40', caption: 'Play them during a turn.' }
 ];
 
 const ACTIONS = [
@@ -148,8 +148,9 @@ export default function RulesOverlay({ onClose }: RulesOverlayProps) {
           {/* 3. Card types */}
           <Section title="Card types" delay={80}>
             <div className="grid grid-cols-3 gap-3">
-              {TYPES.map(({ card, count, caption }) => (
+              {TYPES.map(({ card, name, count, caption }) => (
                 <div key={card.id} className="flex flex-col items-center gap-2 text-center">
+                  <span className="text-xs font-semibold text-white/80">{name}</span>
                   <CardComponent card={card} size="rules" showRevealBadge={false} />
                   <Chip>{count}</Chip>
                   <p className="text-xs text-white/60">{caption}</p>

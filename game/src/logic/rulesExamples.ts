@@ -52,7 +52,7 @@ export interface SetExample {
 export const setExamples: SetExample[] = [
   {
     id: 'same-color',
-    trait: 'All Rose',
+    trait: 'Same Color (ex. All Rose)',
     ariaLabel: 'Same colour set: three Rose cards with different shapes and numbers',
     cards: [
       normal('set-color-1', 'rose', 1, 'circle'),
@@ -62,7 +62,7 @@ export const setExamples: SetExample[] = [
   },
   {
     id: 'same-number',
-    trait: 'All 5',
+    trait: 'Same Number (ex. All 5)',
     ariaLabel: 'Same number set: three 5s with different colours and shapes',
     cards: [
       normal('set-number-1', 'periwinkle', 5, 'circle'),
@@ -72,7 +72,7 @@ export const setExamples: SetExample[] = [
   },
   {
     id: 'same-shape',
-    trait: 'All pentagons',
+    trait: 'Same Shape (ex. All pentagons)',
     ariaLabel: 'Same shape set: three pentagons with different colours and numbers',
     cards: [
       normal('set-shape-1', 'periwinkle', 2, 'pentagon'),
@@ -82,7 +82,7 @@ export const setExamples: SetExample[] = [
   },
   {
     id: 'wild',
-    trait: 'TEAL = 4',
+    trait: 'Wild Card (ex. TEAL = 4)',
     ariaLabel: 'Wild set: a TEAL wild card adopting the number 4 to complete two 4s',
     cards: [
       normal('set-wild-1', 'periwinkle', 4, 'circle'),
