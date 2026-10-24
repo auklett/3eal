@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { ALICE, aliceCards, mockConfig, mockRoomSocket, ownSlotIds, playerView, waitForOwnTable } from './fixtures';
+import { ALICE, BOB, aliceCards, mockConfig, mockRoomSocket, ownSlotIds, playerView, waitForOwnTable } from './fixtures';
 
 async function dragSlot(page: Page, from: number, to: number): Promise<void> {
   const source = page.locator(`[data-table-owner="${ALICE}"][data-table-slot="${from}"]`);
@@ -97,6 +97,20 @@ test('rearrangement still works while the game is paused', async ({ page }) => {
   await waitForOwnTable(page, /Your Table/);
 
   await expect(page.locator(`[data-table-owner="${ALICE}"][data-table-slot="0"]`)).toBeEnabled();
+  const first = await page.locator(`[data-table-owner="${ALICE}"][data-table-slot="0"]`).getAttribute('data-card-id');
+  await page.locator(`[data-table-owner="${ALICE}"][data-table-slot="0"]`).click();
+  await page.locator(`[data-table-owner="${ALICE}"][data-table-slot="8"]`).click();
+
+  const ids = await ownSlotIds(page);
+  expect(ids[8]).toBe(first);
+});
+
+test('rearrangement still works after the game ends', async ({ page }) => {
+  await mockRoomSocket(page, 'ABCD', playerView({ phase: 'finished', winnerId: BOB }));
+  await page.goto('/game/ABCD');
+  await waitForOwnTable(page, /Your Table/);
+
+  await expect(page.getByRole('heading', { name: 'Game over', exact: true })).toBeVisible();
   const first = await page.locator(`[data-table-owner="${ALICE}"][data-table-slot="0"]`).getAttribute('data-card-id');
   await page.locator(`[data-table-owner="${ALICE}"][data-table-slot="0"]`).click();
   await page.locator(`[data-table-owner="${ALICE}"][data-table-slot="8"]`).click();

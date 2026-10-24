@@ -2,6 +2,7 @@ import { createDeck } from './deck';
 import { expireInterrupt, openInterrupt, respondToInterrupt } from './interrupts';
 import { createSeededRandom, shuffle } from './random';
 import { findWinningPartition } from './sets';
+import { ACTIONS } from './types';
 import type {
   ActionCard,
   Card,
@@ -17,6 +18,9 @@ export const MIN_TURN_SECONDS = 15;
 export const MAX_TURN_SECONDS = 180;
 export const AWAY_AFTER_MS = 60_000;
 export const REJOIN_REQUEST_TIMEOUT_MS = 60_000;
+/** The deck holds 10 copies of every action, so 10 players can start. */
+export const MAX_STARTING_PLAYERS = 10;
+export const STARTING_ACTION_COUNT = ACTIONS.length;
 
 export type TableSlot = { card: TableCard; revealed: boolean };
 export type RoomPlayer = {
@@ -27,10 +31,19 @@ export type RoomPlayer = {
   away: boolean;
   awayAt: number | null;
   kicked: boolean;
+  /** Present after the member chose Leave Lobby; purged on the next lobby reset. */
+  left: boolean;
   table: TableSlot[];
   hand: Card[];
 };
-export type RoomSpectator = { id: string; sessionIds: string[]; name: string; connected: boolean };
+export type RoomSpectator = {
+  id: string;
+  sessionIds: string[];
+  name: string;
+  connected: boolean;
+  /** Present after the member chose Leave Lobby; purged on the next lobby reset. */
+  left: boolean;
+};
 export type RejoinRequest = {
   id: string;
   requesterId: string;
@@ -42,6 +55,8 @@ export type RejoinRequest = {
 export type LastInterruptResult = {
   kind: InterruptAction;
   outcome: 'appealed' | 'resolved' | 'expired';
+  /** Server timestamp of the resolution; clients key the transient notice on it. */
+  resolvedAt: number;
 };
 
 /**
@@ -92,11 +107,17 @@ export type RoomIntent =
   | { t: 'action'; cardId: string; kind: InterruptAction; targetId: string; slot: number }
   | { t: 'appeal'; cardId: string }
   | { t: 'pass' }
-  | { t: 'endTurn' }
-  | { t: 'rematch' };
+  | { t: 'endTurn' };
 
 export type ReduceResult = { state: RoomState } | { state: RoomState; error: string };
 export type DeadlineResult = { state: RoomState; expiredRejoinIds: string[] };
+export type LeaveRoomResult = {
+  result: ReduceResult;
+  /** The participant removed (or marked as left) by this intent. */
+  removedId?: string;
+  /** True when no members remain, so the Worker must delete the room. */
+  roomDeleted?: boolean;
+};
 
 function normalizeName(name: string): string {
   return name.trim().toLowerCase();
@@ -148,26 +169,34 @@ function getPlayer(state: RoomState, playerId: string): RoomPlayer | undefined {
 }
 
 function getParticipant(state: RoomState, id: string): RoomPlayer | RoomSpectator | undefined {
-  return getPlayer(state, id) ?? state.spectators.find((spectator) => spectator.id === id);
+  const player = getPlayer(state, id);
+  if (player && !player.left) return player;
+  const spectator = state.spectators.find((candidate) => candidate.id === id);
+  return spectator && !spectator.left ? spectator : undefined;
 }
 
+/**
+ * Host succession: the first remaining connected member in list order, with
+ * players considered before spectators. Members who left or were kicked never
+ * inherit. Used by both disconnect transfer and explicit leavings.
+ */
 function transferHost(state: RoomState): void {
-  const currentIndex = state.players.findIndex((player) => player.id === state.hostId);
-  for (let offset = 1; offset <= state.players.length; offset += 1) {
-    const candidate = state.players[(currentIndex + offset + state.players.length) % state.players.length];
-    if (candidate?.connected && !candidate.kicked) {
-      state.hostId = candidate.id;
-      return;
-    }
-  }
+  const members: Array<RoomPlayer | RoomSpectator> = [...state.players, ...state.spectators];
+  const successor = members.find((member) => {
+    if (member.id === state.hostId) return false;
+    if (!member.connected || member.left) return false;
+    return !('kicked' in member && member.kicked);
+  });
+  if (successor) state.hostId = successor.id;
 }
 
 function setPublicResult(
   state: RoomState,
   kind: InterruptAction,
-  outcome: LastInterruptResult['outcome']
+  outcome: LastInterruptResult['outcome'],
+  now: number
 ): void {
-  state.lastInterruptResult = { kind, outcome };
+  state.lastInterruptResult = { kind, outcome, resolvedAt: now };
 }
 
 /** Discarded cards are shuffled straight back into the draw deck. */
@@ -187,6 +216,8 @@ function beginTurn(state: RoomState, playerId: string, now: number): void {
   state.turnNumber += 1;
   state.turnRemainingMs = null;
   state.turnEndsAt = now + state.turnDurationSeconds * 1000;
+  // A result notice belongs to the turn it resolved in; never carry it forward.
+  state.lastInterruptResult = null;
   drawForTurn(state);
 }
 
@@ -211,6 +242,8 @@ function finishTurn(state: RoomState, now: number): void {
     return;
   }
 
+  // The interrupt result was shown during this turn; a turn transition hides it.
+  state.lastInterruptResult = null;
   const keptActionCards = active.hand.filter((card) => card.kind === 'action');
   discardToDeck(state, active.hand.filter((card) => card.kind !== 'action'));
   active.hand = keptActionCards;
@@ -269,7 +302,7 @@ function resolvePendingAction(
     discardToDeck(state, [pending.actionCard]);
   }
 
-  setPublicResult(state, action.kind, outcome);
+  setPublicResult(state, action.kind, outcome, now);
   state.pendingAction = null;
   state.turnEndsAt = null;
 
@@ -312,6 +345,7 @@ export function createRoom(roomCode: string, hostId: string, hostSessionId: stri
       away: false,
       awayAt: null,
       kicked: false,
+      left: false,
       table: [],
       hand: []
     }],
@@ -365,11 +399,12 @@ export function addParticipant(
           away: false,
           awayAt: null,
           kicked: false,
+          left: false,
           table: [],
           hand: []
         });
       } else {
-        next.spectators.push({ id, sessionIds: [sessionId], name: cleanName(finalName), connected: true });
+        next.spectators.push({ id, sessionIds: [sessionId], name: cleanName(finalName), connected: true, left: false });
       }
       return { state: next };
     }
@@ -388,11 +423,12 @@ export function addParticipant(
       away: false,
       awayAt: null,
       kicked: false,
+      left: false,
       table: [],
       hand: []
     });
   } else {
-    next.spectators.push({ id, sessionIds: [sessionId], name: cleanName(name), connected: true });
+    next.spectators.push({ id, sessionIds: [sessionId], name: cleanName(name), connected: true, left: false });
   }
   return { state: next };
 }
@@ -462,7 +498,8 @@ export function resolveRejoinRequest(
     id: request.spectatorId,
     sessionIds: [request.requesterId],
     name: spectatorName,
-    connected: true
+    connected: true,
+    left: false
   });
   return {
     result: { state: next },
@@ -474,6 +511,9 @@ export function resolveRejoinRequest(
 function startGame(state: RoomState, now: number): string | undefined {
   if (state.phase !== 'lobby') return 'The game can only be started from the lobby';
   if (state.players.length < 2) return 'At least two players are required to start';
+  if (state.players.length > MAX_STARTING_PLAYERS) {
+    return `Up to ${MAX_STARTING_PLAYERS} players can start a game. Move extras to Spectator.`;
+  }
   if (state.players.some((player) => player.kicked)) return 'Remove kicked seats before starting';
 
   const random = randomFor(state);
@@ -482,26 +522,41 @@ function startGame(state: RoomState, now: number): string | undefined {
     return 'There are not enough Normal and TEAL cards to deal this many players';
   }
 
-  const skippedActions: Card[] = [];
+  // Take the first matching card from the already-shuffled deck so the deal is
+  // deterministic and reproducible from the seed. Every Hand starts with one of
+  // each action (in a fixed order) plus three revealed Table cards.
+  const take = (predicate: (card: Card) => boolean): Card | undefined => {
+    const index = deck.findIndex(predicate);
+    if (index === -1) return undefined;
+    return deck.splice(index, 1)[0];
+  };
+
   for (const player of state.players) {
     player.table = [];
     player.hand = [];
+    for (const action of ACTIONS) {
+      const card = take((candidate) => candidate.kind === 'action' && candidate.action === action);
+      if (!card) return 'The deck ran out while dealing the starting action cards';
+      player.hand.push(card);
+    }
     while (player.table.length < 3) {
-      const card = deck.pop();
+      const card = take((candidate) => candidate.kind !== 'action');
       if (!card) return 'The deck ran out while dealing the starting Tables';
-      if (card.kind === 'action') skippedActions.push(card);
+      if (card.kind === 'action') return 'The deck ran out while dealing the starting Tables';
       // Starting Table cards are dealt revealed: everyone can see them.
-      else player.table.push({ card, revealed: true });
+      player.table.push({ card, revealed: true });
     }
   }
-  deck.push(...skippedActions);
-  state.deck = shuffle(deck, randomFor(state));
+  state.deck = deck;
   state.phase = 'playing';
   state.winnerId = null;
   state.winningSets = null;
   state.paused = false;
   state.pauseRemaining = null;
   state.turnNumber = 0;
+  state.turnEndsAt = null;
+  state.turnRemainingMs = null;
+  state.pendingAction = null;
   state.lastInterruptResult = null;
   state.skipAfterInterrupt = false;
 
@@ -517,12 +572,12 @@ function changeRole(state: RoomState, playerId: string, role: 'player' | 'specta
   const spectator = state.spectators.find((candidate) => candidate.id === playerId);
   if (role === 'spectator' && player) {
     if (player.id === state.hostId) {
-      state.spectators.push({ id: player.id, sessionIds: player.sessionIds, name: player.name, connected: true });
+      state.spectators.push({ id: player.id, sessionIds: player.sessionIds, name: player.name, connected: true, left: false });
       state.players = state.players.filter((candidate) => candidate.id !== player.id);
       transferHost(state);
       return undefined;
     }
-    state.spectators.push({ id: player.id, sessionIds: player.sessionIds, name: player.name, connected: player.connected });
+    state.spectators.push({ id: player.id, sessionIds: player.sessionIds, name: player.name, connected: player.connected, left: false });
     state.players = state.players.filter((candidate) => candidate.id !== player.id);
   } else if (role === 'player' && spectator) {
     state.players.push({
@@ -533,6 +588,7 @@ function changeRole(state: RoomState, playerId: string, role: 'player' | 'specta
       away: false,
       awayAt: null,
       kicked: false,
+      left: false,
       table: [],
       hand: []
     });
@@ -583,7 +639,7 @@ function doAction(
   state.pendingAction = { actionCard, interrupt: { ...action, endsAt: now, responderIds: [], passedIds: [] } };
   const outcome = openInterrupt(action, state.players, now);
   if (outcome.status === 'resolved') {
-    state.lastInterruptResult = { kind: intent.kind, outcome: 'resolved' };
+    state.lastInterruptResult = { kind: intent.kind, outcome: 'resolved', resolvedAt: now };
     const result = { status: 'resolved' as const, reason: 'no-appeal-available' as const };
     continueAfterInterrupt(state, result, now);
   } else {
@@ -649,6 +705,94 @@ function resumeGame(state: RoomState, now: number): void {
   state.pauseRemaining = null;
 }
 
+/**
+ * Resets a finished room to its just-created lobby state while keeping the
+ * still-present people. The Worker supplies a fresh seed so the next Start is a
+ * new shuffle. Members who left, disconnected, or went away are dropped and
+ * their names / Player N numbers become available again.
+ */
+export function returnToLobby(state: RoomState, actorId: string, freshSeed: string): ReduceResult {
+  if (actorId !== state.hostId) return { state, error: 'Only the host can return to the lobby' };
+  if (state.phase !== 'finished') return { state, error: "The game isn't over yet" };
+
+  const next = structuredClone(state);
+  next.players = next.players.filter((player) =>
+    player.id === actorId || (player.connected && !player.away && !player.left && !player.kicked)
+  );
+  next.spectators = next.spectators.filter((spectator) => spectator.connected && !spectator.left);
+  if (!next.players.some((player) => player.id === next.hostId) && !next.spectators.some((spectator) => spectator.id === next.hostId)) {
+    transferHost(next);
+  }
+
+  next.phase = 'lobby';
+  next.deck = [];
+  next.activePlayerId = null;
+  next.turnNumber = 0;
+  next.turnEndsAt = null;
+  next.turnRemainingMs = null;
+  next.pendingAction = null;
+  next.lastInterruptResult = null;
+  next.winnerId = null;
+  next.winningSets = null;
+  next.paused = false;
+  next.pauseRemaining = null;
+  next.rejoinRequests = [];
+  next.skipAfterInterrupt = false;
+  next.randomSeed = freshSeed;
+  next.randomCounter = 0;
+  for (const player of next.players) {
+    player.table = [];
+    player.hand = [];
+    player.away = false;
+    player.awayAt = null;
+    player.kicked = false;
+    player.left = false;
+  }
+  for (const spectator of next.spectators) spectator.left = false;
+  return { state: next };
+}
+
+/**
+ * Leave Lobby: remove the member (or, for the winner, mark them as left so the
+ * remaining people can still render Game Over until the reset). Host succession
+ * runs when needed, and an empty room is reported for deletion by the Worker.
+ */
+export function leaveRoom(state: RoomState, actorId: string): LeaveRoomResult {
+  if (state.phase === 'playing') {
+    return { result: { state, error: 'Leave Lobby is only available after the game ends' } };
+  }
+  const member = getParticipant(state, actorId);
+  if (!member) return { result: { state, error: 'You are not a member of this room' } };
+
+  const next = structuredClone(state);
+  const player = next.players.find((candidate) => candidate.id === actorId);
+  const spectator = next.spectators.find((candidate) => candidate.id === actorId);
+  const wasHost = next.hostId === actorId;
+  const keepForGameOver = Boolean(player && next.phase === 'finished' && next.winnerId === player.id);
+
+  if (player) {
+    if (keepForGameOver) {
+      player.left = true;
+      player.connected = false;
+      player.away = true;
+      player.awayAt = null;
+      player.sessionIds = [];
+    } else {
+      next.players = next.players.filter((candidate) => candidate.id !== actorId);
+    }
+  }
+  if (spectator) next.spectators = next.spectators.filter((candidate) => candidate.id !== actorId);
+
+  const remaining = [...next.players, ...next.spectators].filter((candidate) =>
+    !candidate.left && !('kicked' in candidate && candidate.kicked)
+  );
+  if (remaining.length === 0) {
+    return { result: { state: next }, removedId: actorId, roomDeleted: true };
+  }
+  if (wasHost) transferHost(next);
+  return { result: { state: next }, removedId: actorId };
+}
+
 export function reduceRoom(state: RoomState, actorId: string, intent: RoomIntent, now: number): ReduceResult {
   const actor = getParticipant(state, actorId);
   if (!actor) return { state, error: 'You are not a member of this room' };
@@ -686,34 +830,6 @@ export function reduceRoom(state: RoomState, actorId: string, intent: RoomIntent
     if (actorId !== state.hostId) return { state, error: 'Only the host can resume the game' };
     if (!state.paused) return { state, error: 'The game is not paused' };
     resumeGame(next, now);
-    return { state: next };
-  }
-
-  if (intent.t === 'rematch') {
-    if (actorId !== state.hostId || state.phase !== 'finished') {
-      return { state, error: 'Only the host can start a rematch after the game ends' };
-    }
-    next.players = next.players.filter((player) => player.connected && !player.kicked);
-    if (next.players.length < 2) return { state, error: 'At least two connected players are required for a rematch' };
-    next.phase = 'lobby';
-    next.deck = [];
-    next.activePlayerId = null;
-    next.turnNumber = 0;
-    next.turnEndsAt = null;
-    next.turnRemainingMs = null;
-    next.pendingAction = null;
-    next.lastInterruptResult = null;
-    next.winnerId = null;
-    next.winningSets = null;
-    next.paused = false;
-    next.pauseRemaining = null;
-    next.rejoinRequests = [];
-    for (const player of next.players) {
-      player.table = [];
-      player.hand = [];
-      player.away = false;
-      player.awayAt = null;
-    }
     return { state: next };
   }
 
@@ -804,6 +920,7 @@ export function setParticipantConnected(state: RoomState, participantId: string,
   const next = structuredClone(state);
   const player = getPlayer(next, participantId);
   if (player) {
+    if (player.left) return next;
     player.connected = connected;
     if (connected) {
       player.away = false;
@@ -822,7 +939,7 @@ export function setParticipantConnected(state: RoomState, participantId: string,
     }
   } else {
     const spectator = next.spectators.find((candidate) => candidate.id === participantId);
-    if (spectator) spectator.connected = connected;
+    if (spectator && !spectator.left) spectator.connected = connected;
   }
   return next;
 }
@@ -874,7 +991,8 @@ export function processDeadlines(state: RoomState, now: number): DeadlineResult 
       id: request.spectatorId,
       sessionIds: [request.requesterId],
       name: uniqueSpectatorName(next, request.name),
-      connected: true
+      connected: true,
+      left: false
     });
   }
 

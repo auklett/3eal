@@ -45,6 +45,8 @@ export const persistedRoomSchema = z.object({
     away: z.boolean(),
     awayAt: z.number().int().nullable(),
     kicked: z.boolean(),
+    // Defaulted so rooms persisted before Leave Lobby still load.
+    left: z.boolean().default(false),
     table: z.array(z.object({
       card: tableCardSchema,
       revealed: z.boolean()
@@ -55,7 +57,8 @@ export const persistedRoomSchema = z.object({
     id: z.string().uuid(),
     sessionIds: z.array(z.string().uuid()),
     name: z.string().trim().min(1).max(64),
-    connected: z.boolean()
+    connected: z.boolean(),
+    left: z.boolean().default(false)
   }).strict()),
   turnDurationSeconds: z.number().int().min(15).max(180),
   deck: z.array(cardSchema),
@@ -69,7 +72,9 @@ export const persistedRoomSchema = z.object({
   }).strict().nullable(),
   lastInterruptResult: z.object({
     kind: z.enum(['CONCEAL', 'STEAL', 'REVEAL']),
-    outcome: z.enum(['appealed', 'resolved', 'expired'])
+    outcome: z.enum(['appealed', 'resolved', 'expired']),
+    // Defaulted for rows written before the transient result notice existed.
+    resolvedAt: z.number().int().default(0)
   }).strict().nullable(),
   winnerId: z.string().uuid().nullable(),
   // Defaulted so rows persisted before the pause / winning-sets change still

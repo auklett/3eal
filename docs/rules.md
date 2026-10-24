@@ -21,7 +21,7 @@ TEAL is a distinct wild card, not an ordinary Teal-colored Normal card. For a Sa
 ## Zones and visibility
 
 - **Table:** Holds Normal and TEAL cards. Cards are either revealed (visible to everyone) or concealed (identity visible only to their owner). The three starting Table cards are dealt revealed, so everyone can see them; CONCEAL can hide one later. A STEAL may temporarily take a table above nine cards until end-of-turn cleanup.
-- **Hand:** Private and unbounded. All unused Action cards remain in Hand across turns until played; all other cards left at turn end are shuffled straight back into the deck. No card in a Hand can be targeted.
+- **Hand:** Private and unbounded. Every player starts with one each of CONCEAL, STEAL, REVEAL, and APPEAL in Hand. All unused Action cards remain in Hand across turns until played; all other cards left at turn end are shuffled straight back into the deck. No card in a Hand can be targeted.
 - Public views never include another player's hand size or contents. A player's own view includes their own Hand; opponents and spectators see only their Table. Players see their own concealed cards. Spectators receive exactly the same public information as an opponent, with no private-card privileges.
 - Card IDs are random and must not encode card identity. Stealing preserves the card's reveal/conceal state; the thief can see it in their own private view.
 
@@ -33,9 +33,9 @@ The win check searches for any valid partition of all nine Table cards into thre
 
 ## Setup
 
-The room supports at least two players and has no configured maximum player count. Starting still requires enough Normal/TEAL cards to deal three Table cards to every player. New users join as players by default while the game is in the lobby; they can switch to spectator there. If the game has started, they join as spectators. Player joining is not capped by a configured limit.
+The room supports 2–10 players. The 10-player cap matches the ten copies of each Action card in the deck. New users join as players by default while the game is in the lobby; they can switch to spectator there. If the game has started, they join as spectators.
 
-Deal three cards to each player's Table, all revealed, and no cards to their Hand. The remaining cards form the draw deck. Choose the first active player randomly.
+Deal one CONCEAL, one STEAL, one REVEAL, and one APPEAL to each player's Hand, then deal three Normal/TEAL cards to each player's Table, all revealed. These starting cards are taken from the 218-card deck without reshuffling the remainder, so the draw deck holds `218 − 7 × players` cards before the first draw. Choose the first active player randomly.
 
 ## Turn flow
 
@@ -80,7 +80,7 @@ The host may pause and resume at any time while a game is in progress; pause con
 - Pausing freezes every server deadline: the turn timer, the interrupt (appeal) timer, away timers, and pending rejoin-request timers. Nothing expires, is skipped, or auto-resolves while paused.
 - While paused the server rejects all game actions (placing or moving cards, ending a turn, appealing, passing, or choosing an action target) with a "Game is paused" error. Host management — kicking participants and approving or declining rejoin requests — remains available, and local Table rearrangement still works because it never contacts the server.
 - All players and spectators see a "Game paused by host" banner. The host sees a Resume control; countdowns show their frozen values rather than ticking.
-- An appeal pop-up stays visible while paused, but its Yes/No buttons are disabled and labelled "Paused" until play resumes.
+- An appeal prompt stays visible while paused, but its APPEAL and Pass buttons are disabled and labelled "Paused" until play resumes.
 - Heartbeats continue, but nobody is marked away and no turn is skipped while paused. On resume, away clocks continue from their stored remaining time.
 - There is no maximum pause length. If the host disconnects, leaves, or is kicked while paused, the game stays paused until the new host resumes it; it never auto-resumes.
 
@@ -90,6 +90,17 @@ There is no chat, including spectator chat. Spectators see concealed cards face-
 
 A new session may request to rejoin by entering a player's name. The host approves or declines; the requester receives no game data before approval. A declined request or one unanswered for about 60 seconds becomes a spectator. Approval disconnects any old socket for that seat. Names are trimmed and unique case-insensitively.
 
-Player seats, names, Tables, and action cards are held through disconnect until the game ends. After 60 seconds away, mark the player away and skip their current turn; future turns for that player are skipped immediately. A seat is never forfeited — it is held until the game ends. If the host disconnects, host ownership transfers to the next connected player. The original host must request rejoin and be approved like any other returning player.
+Player seats, names, Tables, and action cards are held through disconnect until the game ends. After 60 seconds away, mark the player away and skip their current turn; future turns for that player are skipped immediately. A seat is never forfeited — it is held until the game ends. If the host disconnects, host ownership transfers to the first remaining connected, non-left, non-kicked member in list order, with players considered before spectators. The original host must request rejoin and be approved like any other returning player.
 
-The host can kick players and spectators. After a game ends, players may rematch.
+The host can kick players and spectators.
+
+## After the game
+
+When a game ends, the winner's three sets stay visible. The host sees **Return to Lobby**; every member sees **Leave Lobby**. Rematch is no longer a separate action.
+
+- **Return to Lobby** is host-only. It resets the room directly to the lobby, clears every Table, Hand, deck, turn, pause, winner, and rejoin-request state, and keeps the room code and turn-timer setting.
+- Members who are disconnected, away, left, or kicked are removed by the reset, and their names and default `Player N` numbers become available again. Present players keep their seats; present spectators stay spectators.
+- The next Start uses a fresh seed, so it produces a new deal. Starting again requires 2–10 players.
+- **Leave Lobby** is available only after the game ends. A non-winner is removed immediately. A winner who leaves is kept as a left record until the reset so the remaining players can still see the Game Over result; their seat no longer accepts play.
+- If the host leaves, ownership passes to the first remaining connected, non-left, non-kicked member in list order (players first, then spectators). If nobody remains, the room is deleted.
+- Leaving during a live game is not available through **Leave Lobby**. The top-bar **Leave** control closes the game view and uses the normal disconnect and rejoin flow; the seat is held until the game ends.

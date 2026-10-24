@@ -17,7 +17,6 @@ async function openRulesInGame(page: Page): Promise<string> {
   await mockRoomSocket(page, 'ABCD', playerView());
   await page.goto('/game/ABCD');
   await expect(page.getByRole('heading', { name: /Your Table/ })).toBeVisible();
-  await page.getByRole('button', { name: 'Players' }).click();
   await page.getByRole('button', { name: 'Rules' }).click();
   const dialog = page.getByRole('dialog', RULES);
   await expect(dialog).toBeVisible();
@@ -37,10 +36,13 @@ test('the Rules overlay shows the visual sections, set examples, and corrected a
   const dialog = page.getByRole('dialog', RULES);
   await expect(dialog).toBeVisible();
 
-  // The set-example chips name every pattern, including the non-set.
-  for (const chip of ['Same Color (ex. All Rose)', 'Same Number (ex. All 5)', 'Same Shape (ex. All pentagons)', 'Wild Card (ex. TEAL = 4)', 'Nothing matches']) {
+  // The four valid-set panels name every pattern; the non-set counter-example
+  // was removed.
+  for (const chip of ['Same Color (ex. All Rose)', 'Same Number (ex. All 5)', 'Same Shape (ex. All pentagons)', 'Wild Card (ex. TEAL = 4)']) {
     await expect(dialog.getByText(chip, { exact: true })).toBeVisible();
   }
+  await expect(dialog.getByText('Nothing matches', { exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole('group', { name: /set:/i })).toHaveCount(4);
   // Each card type is named above its example card.
   for (const name of ['Normal', 'Teal Wild', 'Action']) {
     await expect(dialog.getByText(name, { exact: true })).toBeVisible();
@@ -81,7 +83,7 @@ test('the Rules overlay fits a 360px viewport without horizontal scroll', async 
   await page.getByRole('button', { name: 'Rules' }).click();
   const dialog = page.getByRole('dialog', RULES);
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByText('Nothing matches', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('Wild Card (ex. TEAL = 4)', { exact: true })).toBeVisible();
   await expect(dialog.getByText('60s per turn', { exact: true })).toBeVisible();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(overflow).toBeLessThanOrEqual(1);

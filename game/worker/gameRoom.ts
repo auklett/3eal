@@ -4,11 +4,13 @@ import {
   addParticipant,
   createRoom,
   kickParticipant,
+  leaveRoom,
   nextRoomDeadline,
   processDeadlines,
   reduceRoom,
   requestRejoin,
   resolveRejoinRequest,
+  returnToLobby,
   setParticipantConnected,
   type RoomIntent,
   type RoomState
@@ -112,6 +114,8 @@ export class GameRoom extends DurableObject<Env> {
     if (message.t === 'rejoinDecision') return this.handleRejoinDecision(webSocket, message);
     if (message.t === 'kick') return this.handleKick(webSocket, attachment, message);
     if (message.t === 'changeName') return this.handleChangeName(webSocket, attachment, message);
+    if (message.t === 'returnToLobby') return this.handleReturnToLobby(webSocket, attachment);
+    if (message.t === 'leaveRoom') return this.handleLeaveRoom(webSocket, attachment);
 
     if (!attachment.playerId) return this.sendError(webSocket, 'spectator_read_only', 'Spectators cannot send game actions');
     const intent = toRoomIntent(message);
@@ -125,7 +129,6 @@ export class GameRoom extends DurableObject<Env> {
         role: message.role
       } satisfies Attachment);
     }
-    if (message.t === 'rematch') this.closeKickedSockets();
     await this.commit();
   }
 
@@ -154,9 +157,11 @@ export class GameRoom extends DurableObject<Env> {
     if (attachment.role !== 'unjoined') return this.sendError(webSocket, 'already_joined', 'This connection has already joined');
 
     const existingPlayer = this.room.players.find((player) =>
-      player.sessionIds.includes(message.sessionId) && !player.kicked
+      player.sessionIds.includes(message.sessionId) && !player.kicked && !player.left
     );
-    const existingSpectator = this.room.spectators.find((spectator) => spectator.sessionIds.includes(message.sessionId));
+    const existingSpectator = this.room.spectators.find((spectator) =>
+      spectator.sessionIds.includes(message.sessionId) && !spectator.left
+    );
     if (existingPlayer || existingSpectator) {
       const participant = existingPlayer ?? existingSpectator;
       if (!participant) return this.sendError(webSocket, 'session_missing', 'Session could not be restored');
@@ -174,7 +179,7 @@ export class GameRoom extends DurableObject<Env> {
     }
 
     const matchingPlayer = this.room.players.find((player) =>
-      player.name.trim().toLowerCase() === message.name.trim().toLowerCase() && !player.kicked
+      player.name.trim().toLowerCase() === message.name.trim().toLowerCase() && !player.kicked && !player.left
     );
     if (matchingPlayer && this.room.phase !== 'lobby' && message.role === 'player') {
       return this.createRejoinRequest(webSocket, message.sessionId, message.name);
@@ -213,7 +218,6 @@ export class GameRoom extends DurableObject<Env> {
     if ('error' in result) return this.sendError(webSocket, 'rejoin_rejected', result.error);
     this.room = result.state;
     const request = this.room.rejoinRequests.find((item) => item.id === requestId);
-    const hostSocket = this.socketForPlayer(this.room.hostId);
     if (!request) return this.sendError(webSocket, 'rejoin_failed', 'Could not create rejoin request');
     webSocket.serializeAttachment({
       role: 'pending',
@@ -223,7 +227,6 @@ export class GameRoom extends DurableObject<Env> {
       requestId
     } satisfies Attachment);
     this.send(webSocket, { t: 'rejoinPending' });
-    if (hostSocket) this.send(hostSocket, { t: 'rejoinRequest', requestId, name: request.name });
     await this.commit();
   }
 
@@ -335,6 +338,63 @@ export class GameRoom extends DurableObject<Env> {
       : spectatorView(this.room) });
   }
 
+  private async handleReturnToLobby(webSocket: WebSocket, attachment: Attachment): Promise<void> {
+    if (!this.room) return this.sendError(webSocket, 'room_missing', 'Room is not initialized');
+    if (!attachment.playerId) return this.sendError(webSocket, 'not_in_room', 'You must be in the room to return to the lobby');
+    // The Worker owns the fresh seed so the next game is a brand-new shuffle.
+    const result = returnToLobby(this.room, attachment.playerId, crypto.randomUUID());
+    if ('error' in result) return this.sendError(webSocket, 'rejected', result.error);
+    this.room = result.state;
+    this.closeRemovedSockets();
+    await this.commit();
+  }
+
+  private async handleLeaveRoom(webSocket: WebSocket, attachment: Attachment): Promise<void> {
+    if (!this.room) return this.sendError(webSocket, 'room_missing', 'Room is not initialized');
+    if (!attachment.playerId) return this.sendError(webSocket, 'not_in_room', 'You must be in the room to leave');
+    const result = leaveRoom(this.room, attachment.playerId);
+    if ('error' in result.result) return this.sendError(webSocket, 'rejected', result.result.error);
+
+    if (result.roomDeleted) {
+      this.room = null;
+      await this.ctx.storage.deleteAll();
+      await this.ctx.storage.deleteAlarm();
+      for (const socket of this.ctx.getWebSockets('room')) {
+        if (socket === webSocket) this.send(socket, { t: 'left' });
+        socket.close(4004, 'left');
+      }
+      return;
+    }
+
+    this.room = result.result.state;
+    for (const socket of this.ctx.getWebSockets('room')) {
+      const target = socket.deserializeAttachment() as Attachment;
+      if (target.playerId === result.removedId) {
+        this.send(socket, { t: 'left' });
+        socket.close(4004, 'left');
+      }
+    }
+    await this.commit();
+  }
+
+  private closeRemovedSockets(): void {
+    if (!this.room) return;
+    const remaining = new Set([
+      ...this.room.players.filter((player) => !player.left).map((player) => player.id),
+      ...this.room.spectators.filter((spectator) => !spectator.left).map((spectator) => spectator.id)
+    ]);
+    for (const socket of this.ctx.getWebSockets('room')) {
+      const attachment = socket.deserializeAttachment() as Attachment;
+      if (attachment.role === 'pending') {
+        socket.close(4004, 'left');
+        continue;
+      }
+      if (attachment.playerId && !remaining.has(attachment.playerId)) {
+        socket.close(4004, 'left');
+      }
+    }
+  }
+
   private async handleSocketClose(webSocket: WebSocket): Promise<void> {
     await this.ready;
     if (!this.room) return;
@@ -379,22 +439,6 @@ export class GameRoom extends DurableObject<Env> {
     }
   }
 
-  private closeKickedSockets(): void {
-    if (!this.room) return;
-    const kickedIds = new Set(this.room.players.filter((player) => player.kicked).map((player) => player.id));
-    for (const socket of this.ctx.getWebSockets('room')) {
-      const attachment = socket.deserializeAttachment() as Attachment;
-      if (attachment.playerId && kickedIds.has(attachment.playerId)) socket.close(4003, 'kicked');
-    }
-  }
-
-  private socketForPlayer(playerId: string): WebSocket | undefined {
-    return this.ctx.getWebSockets('room').find((socket) => {
-      const attachment = socket.deserializeAttachment() as Attachment;
-      return attachment.role === 'player' && attachment.playerId === playerId;
-    });
-  }
-
   private socketPlayerId(webSocket: WebSocket): string {
     const attachment = webSocket.deserializeAttachment() as Attachment;
     return attachment.role === 'player' ? attachment.playerId ?? '' : '';
@@ -427,8 +471,8 @@ export class GameRoom extends DurableObject<Env> {
       if (attachment.role === 'unjoined' || attachment.role === 'pending' || !attachment.playerId) continue;
       const player = this.room.players.find((candidate) => candidate.id === attachment.playerId);
       const spectator = this.room.spectators.find((candidate) => candidate.id === attachment.playerId);
-      if (attachment.role === 'player' && player) this.send(webSocket, { t: 'view', view: playerView(this.room, player.id) });
-      else if (attachment.role === 'spectator' && spectator) this.send(webSocket, { t: 'view', view: spectatorView(this.room) });
+      if (attachment.role === 'player' && player && !player.left) this.send(webSocket, { t: 'view', view: playerView(this.room, player.id) });
+      else if (attachment.role === 'spectator' && spectator && !spectator.left) this.send(webSocket, { t: 'view', view: spectatorView(this.room) });
     }
   }
 }
@@ -446,7 +490,6 @@ function toRoomIntent(message: ClientMsg): RoomIntent | null {
     case 'appeal':
     case 'pass':
     case 'endTurn':
-    case 'rematch':
       return message;
     default:
       return null;

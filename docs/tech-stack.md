@@ -31,7 +31,9 @@ game/
 
 ## Authoritative state and privacy
 
-Each room's Durable Object stores the shuffled deck, hands, Tables, action/interrupt state, seats, and rejoin requests in one SQLite row. A validated action reduces the pure room state, persists it, advances the earliest alarm, and broadcasts full snapshots. The Worker never serializes the seed, deck order, opponents' hands, or concealed card identities into public views. Players receive only their own hand and concealed cards in a separate private field. Spectators receive the same public snapshot as opponents. Each player's three starting Table cards are dealt revealed, so their identities are public to everyone; only cards concealed later (a card placed from Hand, or one hidden by CONCEAL) have private identities.
+Each room's Durable Object stores the shuffled deck, hands, Tables, action/interrupt state, seats, and rejoin requests in one SQLite row. A validated action reduces the pure room state, persists it, advances the earliest alarm, and broadcasts full snapshots. The Worker never serializes the seed, deck order, opponents' hands, or concealed card identities into public views. Players receive only their own hand and concealed cards in a separate private field. Spectators receive the same public snapshot as opponents. Each player's three starting Table cards are dealt revealed, so their identities are public to everyone; only cards concealed later (a card placed from Hand, or one hidden by CONCEAL) have private identities. Each player also starts with one CONCEAL, STEAL, REVEAL, and APPEAL in their private Hand.
+
+Rejoin requests are serialized only into the host's private `you.rejoinRequests` list. Every other player view and every spectator view gets an empty list, so the host notice strip derives from the same authoritative snapshots as the rest of the board.
 
 Card IDs are seeded-random 128-bit values, independent of card descriptions. The deck seed comes from the Worker and stays in Durable Object state. At game end the public snapshot reveals all cards and adds the three winning sets (the valid partition the engine found), so every client can render the same Game Over grouping.
 
@@ -43,9 +45,19 @@ Room lookup and creation are separate concerns. `GET /api/rooms/:code/exists` in
 - The 60-second default turn timer pauses during an interrupt; the host sets 15–180 seconds in the lobby.
 - The host may pause and resume at any time during play by sending the `pause` / `resume` messages. Pausing stores each timer's remaining time and freezes every server deadline (turn, interrupt, away, and rejoin-request); no game action is accepted until the host resumes, at which point each deadline is recomputed as `now + remaining` and the alarm is reset to the earliest.
 - A disconnected seat is retained; after 60 seconds away its current/future turns are skipped.
-- The persisted row schema supplies Zod defaults for fields added after the first release (`paused` → `false`, `pauseRemaining` → `null`, `winningSets` → `null`), so rooms persisted before those features still load.
+- A game starts only with 2–10 players. The cap matches the ten copies of each Action card; the engine deals one of each action plus three revealed Table cards per player from the 218-card deck without reshuffling the remainder.
+- The persisted row schema supplies Zod defaults for fields added after the first release (`paused` → `false`, `pauseRemaining` → `null`, `winningSets` → `null`, `left` → `false`, and `lastInterruptResult.resolvedAt` → `0`), so rooms persisted before those features still load.
 - Host approval is required for a new session to reclaim a player seat. Pending requesters receive no view before approval.
 - The room's single alarm is always set to the earliest interrupt, turn, away, or rejoin-request deadline — except while paused, when there is no pending deadline and no alarm is scheduled. Server timers do not use `setTimeout`.
+
+## End of game and room reset
+
+`returnToLobby` and `leaveRoom` are engine helpers rather than `RoomIntent` cases because the Worker supplies the fresh seed and may delete the room:
+
+- **Return to Lobby** is host-only and valid only after the game ends. The Worker passes `crypto.randomUUID()` as the new seed, the engine resets directly to the lobby, and the normal `view` broadcast moves every client to `/lobby/:code`. The reset keeps present players/spectators, the room code, and the timer setting, while clearing cards, turns, pause, winner, winning sets, and rejoin requests. Disconnected, away, left, and kicked members are dropped; their names and default numbers become available again.
+- **Leave Lobby** is available in the lobby and after the game ends, never during play. The engine removes a non-winner immediately and retains a leaving winner as a `left` record until the reset so Game Over remains renderable. The Worker sends `{ t: 'left' }` and closes that member's sockets; the client stops reconnecting and navigates home.
+- Host succession selects the first remaining connected, non-left, non-kicked member in list order (players before spectators). If no members remain, the Worker deletes the Durable Object's storage and alarm.
+- The top-bar **Leave** control during play does not call `leaveRoom`; it closes the view and uses the existing disconnect/rejoin flow, so the seat remains held until the game ends.
 
 ## Free-tier operation
 

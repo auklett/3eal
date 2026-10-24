@@ -140,7 +140,7 @@ export default function HomePage({ onJoinRoom, onCreateRoom, onRules, useTurnsti
 
       <div className="w-full max-w-md">
         <Panel padding="roomy" className="shadow-[0_32px_100px_rgba(0,0,0,0.6)] backdrop-blur-xl">
-          <header className="mb-7 text-center">
+          <header className="mb-5 text-center">
             <div className="mb-5 flex items-center justify-center gap-2.5" aria-hidden="true">
               {tiles.map((tile, index) => (
                 <div
@@ -160,7 +160,6 @@ export default function HomePage({ onJoinRoom, onCreateRoom, onRules, useTurnsti
             >
               3EAL
             </h1>
-            <p className="mt-2 text-sm text-muted">Build three sets. First to nine wins.</p>
           </header>
 
           <div className="space-y-3" aria-label="Room actions">

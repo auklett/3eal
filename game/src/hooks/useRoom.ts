@@ -8,7 +8,6 @@ import { roomExists } from '../logic/createRoom';
 
 type RoomCommand = Exclude<ClientMsg, { t: 'join' } | { t: 'rejoin' }>;
 type ConnectionStatus = 'connecting' | 'connected' | 'reconnecting' | 'awaitingApproval' | 'notFound' | 'closed';
-type RejoinRequest = { requestId: string; name: string };
 
 /** Copy shown while a server-bound action is in flight, and once it is accepted. */
 export type SendFeedback = { pending: string; confirmation: string };
@@ -82,11 +81,8 @@ function applyOptimistic(view: View, message: RoomCommand): View {
     return { role: 'player', data };
   }
 
-  if (message.t === 'setTurnTimer') {
-    data.turnDurationSeconds = message.seconds;
-    return { role: 'player', data };
-  }
-
+  // The lobby keeps the slider/field in local state until the server confirms,
+  // so an optimistic view would make a rejected timer look accepted.
   return view;
 }
 
@@ -94,11 +90,12 @@ export function useRoom(roomCode: string, options: UseRoomOptions) {
   const [view, setView] = useState<View | null>(null);
   const [status, setStatus] = useState<ConnectionStatus>('connecting');
   const [error, setError] = useState('');
-  const [rejoinRequests, setRejoinRequests] = useState<RejoinRequest[]>([]);
   const [pending, setPending] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<string | null>(null);
+  const [left, setLeft] = useState(false);
   const canonicalView = useRef<View | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
+  const leftRef = useRef(false);
   const pendingConfirmation = useRef<string | null>(null);
   const confirmationTimer = useRef<number | undefined>(undefined);
 
@@ -177,20 +174,22 @@ export function useRoom(roomCode: string, options: UseRoomOptions) {
         } else if (message.t === 'rejoinPending') {
           setStatus('awaitingApproval');
           setError('Waiting for the host to approve your rejoin request.');
-        } else if (message.t === 'rejoinRequest') {
-          setRejoinRequests((requests) => [
-            ...requests.filter((request) => request.requestId !== message.requestId),
-            { requestId: message.requestId, name: message.name }
-          ]);
         } else if (message.t === 'rejoinResult') {
           setStatus('connected');
           setError(message.accepted ? '' : 'The host declined. You joined as a spectator.');
+        } else if (message.t === 'left') {
+          // A confirmed Leave Lobby: stop reconnecting and let the page navigate.
+          leftRef.current = true;
+          setLeft(true);
+          setStatus('closed');
+          setError('');
+          settlePending(true);
         }
       });
 
       socket.addEventListener('close', () => {
         if (socketRef.current === socket) socketRef.current = null;
-        if (stopped) return;
+        if (stopped || leftRef.current) return;
         setView(canonicalView.current);
         const scheduleRetry = () => {
           retryCount += 1;
@@ -267,5 +266,5 @@ export function useRoom(roomCode: string, options: UseRoomOptions) {
   }, []);
 
   const clearError = useCallback(() => setError(''), []);
-  return { view, status, error, clearError, send, rejoinRequests, pending, confirmation };
+  return { view, status, error, clearError, send, pending, confirmation, left };
 }

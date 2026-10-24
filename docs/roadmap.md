@@ -6,7 +6,7 @@
 - [x] Update official rules and the Durable Object sketch to the revised gameplay.
 - [x] Define strict Zod schemas for client messages and filtered public/player views.
 - [x] Implement the same-origin Worker, SQLite-backed GameRoom, WebSocket Hibernation API, automatic ping/pong, one-row persistence, and earliest-deadline alarm scheduling.
-- [x] Implement role switching, host turn timer, rejoin approval and timeout, host transfer, away-turn skipping, kicking, and rematch.
+- [x] Implement role switching, host turn timer, rejoin approval and timeout, host transfer, away-turn skipping, kicking, starting Action cards, a 2–10 player start cap, and the host-only Return to Lobby / everyone Leave Lobby end-of-game flow.
 - [x] Replace Firebase room listeners with `useRoom`, optimistic updates/rollback, and reconnect backoff; remove Firebase, Firestore, Pages Functions, and Google Cloud service-account config.
 - [x] Retain unplayed APPEAL cards between turns so eligible players can respond to later interrupts; discard other unplayed cards at turn end.
 - [x] Add Turnstile room creation and optional Cloudflare Web Analytics.
@@ -27,6 +27,6 @@
 
 Do not implement these balance levers without a separate user decision and one-at-a-time simulator evidence: shared face-up draw row, draw-2-keep-1, one action per turn, an action-hand cap, fewer APPEAL cards, or reducing the number range from 7 to 5.
 
-The configured player minimum is 2, with no explicit maximum. Starting a game still requires three Normal/TEAL cards per player from the finite deck. Spectators are unlimited.
+The configured player minimum is 2 and the start cap is 10, matching the ten copies of each Action card. Every player starts with one of each Action card plus three revealed Normal/TEAL Table cards from the finite 218-card deck. Spectators are unlimited.
 
 The default 250-game simulation uses four bots and a 30-second modelled turn, yielding about 14 simulated minutes per game. With that seed/policy, average turns need 32–54 seconds each to land in the 15–25 minute target. This is a timing-model observation, not a balance change; simulator timing is configurable.
