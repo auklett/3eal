@@ -4,6 +4,7 @@ import Chip from '../ui/Chip';
 import Badge from '../ui/Badge';
 import IconButton from '../ui/IconButton';
 import CardComponent from '../cards/CardComponent';
+import { CloseIcon } from '../icons/IconSprite';
 import { useDialog } from '../../hooks/useDialog';
 import {
   actionExamples,
@@ -45,14 +46,11 @@ function SetPanel({ example }: { example: SetExample }) {
         {example.cards.map((card) => (
           <div key={card.id} className="flex flex-col items-center">
             <CardComponent card={card} size="rules" showRevealBadge={false} />
-            {!example.notASet && <TraitMark />}
+            <TraitMark />
           </div>
         ))}
       </div>
-      <div className="flex items-center gap-2">
-        {example.notASet && <span aria-hidden="true" className="text-base font-bold text-rose-400">✕</span>}
-        <Chip>{example.trait}</Chip>
-      </div>
+      <Chip>{example.trait}</Chip>
     </Panel>
   );
 }
@@ -114,8 +112,12 @@ export default function RulesOverlay({ onClose }: RulesOverlayProps) {
       <Panel ref={dialogRef} padding="roomy" className="mx-auto max-w-3xl bg-black/90 shadow-2xl shadow-black/60">
         <div className="mb-6 flex items-center justify-between gap-4">
           <h2 id="rules-title" className="text-2xl font-semibold text-white sm:text-3xl">Game Rules</h2>
-          <IconButton label="Close rules" onClick={onClose}>
-            <span aria-hidden="true" className="text-xl leading-none">×</span>
+          <IconButton
+            label="Close rules"
+            onClick={onClose}
+            className="rounded-xl border-white/10 bg-transparent hover:bg-white/10"
+          >
+            <CloseIcon />
           </IconButton>
         </div>
 

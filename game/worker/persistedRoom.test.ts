@@ -96,6 +96,26 @@ describe('paused room persistence', () => {
     expect(parsed.data.winningSets).toBeNull();
   });
 
+  it('backfills the left flag and the interrupt result timestamp for older rows', () => {
+    const legacy = JSON.parse(JSON.stringify(pausedRoom())) as Record<string, unknown>;
+    const players = legacy['players'] as Array<Record<string, unknown>>;
+    for (const player of players) delete player['left'];
+    legacy['spectators'] = [{
+      id: '00000000-0000-4000-8000-000000000003',
+      sessionIds: ['10000000-0000-4000-8000-000000000003'],
+      name: 'Watcher',
+      connected: true
+    }];
+    legacy['lastInterruptResult'] = { kind: 'STEAL', outcome: 'appealed' };
+
+    const parsed = persistedRoomSchema.safeParse(legacy);
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.players.every((player) => player.left === false)).toBe(true);
+    expect(parsed.data.spectators[0].left).toBe(false);
+    expect(parsed.data.lastInterruptResult?.resolvedAt).toBe(0);
+  });
+
   it('round-trips a paused interrupt without a numeric deadline', () => {
     const room = pausedInterruptRoom();
     expect(room.pendingAction?.interrupt.endsAt).toBeNull();

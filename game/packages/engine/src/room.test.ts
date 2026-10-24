@@ -1,12 +1,16 @@
+import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import {
   addParticipant,
   createRoom,
+  DECK_SIZE,
+  leaveRoom,
   nextRoomDeadline,
   processDeadlines,
   reduceRoom,
   requestRejoin,
   resolveRejoinRequest,
+  returnToLobby,
   setParticipantConnected,
   type RoomState
 } from './index';
@@ -20,8 +24,32 @@ function startTwoPlayerRoom(): RoomState {
   return started.state;
 }
 
+function startRoomWithPlayers(count: number, seed = 'seed'): RoomState {
+  let room = createRoom('ABCD', 'host', 'host-session', 'Host', seed);
+  for (let index = 1; index < count; index += 1) {
+    const joined = addParticipant(room, `player-${index}`, `Player ${index}`, 'player', `session-${index}`);
+    if ('error' in joined) throw new Error(joined.error);
+    room = joined.state;
+  }
+  const started = reduceRoom(room, 'host', { t: 'start' }, 1000);
+  if ('error' in started) throw new Error(started.error);
+  return started.state;
+}
+
+function finishedRoom(): RoomState {
+  const room = startTwoPlayerRoom();
+  room.phase = 'finished';
+  room.winnerId = room.players[0].id;
+  room.winningSets = [[room.players[0].table[0].card.id, room.players[0].table[1].card.id, room.players[0].table[2].card.id]];
+  room.turnEndsAt = null;
+  room.turnRemainingMs = null;
+  room.pendingAction = null;
+  room.lastInterruptResult = { kind: 'STEAL', outcome: 'appealed', resolvedAt: 5000 };
+  return room;
+}
+
 describe('room rules', () => {
-  it('requires two players and starts a revealed three-card table for each', () => {
+  it('requires two players and starts a revealed three-card table plus one of each action card for each', () => {
     const room = createRoom('ABCD', 'host', 'host-session', 'Host', 'seed');
     expect(reduceRoom(room, 'host', { t: 'start' }, 1000)).toMatchObject({ error: 'At least two players are required to start' });
 
@@ -30,25 +58,38 @@ describe('room rules', () => {
     expect(started.players.map((player) => player.table)).toHaveLength(2);
     expect(started.players.every((player) => player.table.length === 3)).toBe(true);
     expect(started.players.every((player) => player.table.every((slot) => slot.revealed))).toBe(true);
+    for (const player of started.players) {
+      // The starting Hand is exactly one of each action, in a fixed order,
+      // followed by the one card drawn at turn start.
+      expect(player.hand.slice(0, 4).map((card) => card.kind === 'action' ? card.action : card.kind))
+        .toEqual(['CONCEAL', 'STEAL', 'REVEAL', 'APPEAL']);
+      expect(player.hand.length).toBeGreaterThanOrEqual(4);
+    }
+    expect(started.deck.length).toBe(218 - 7 * started.players.length - 1);
     expect(started.turnEndsAt).toBe(61_000);
     expect(started.turnNumber).toBe(1);
     expect(started.players[0].id).not.toBe(started.players[0].sessionIds[0]);
     expect(started.players[0].sessionIds).not.toContain(started.players[0].id);
   });
 
-  it('refuses to start when the deck cannot deal three Table cards per player', () => {
+  it('starts with 10 players but rejects 11 with a clear message', () => {
     let room = createRoom('ABCD', 'host', 'host-session', 'Host', 'seed');
-    for (let index = 1; index <= 99; index += 1) {
+    for (let index = 1; index <= 9; index += 1) {
       const joined = addParticipant(room, `player-${index}`, `Player ${index}`, 'player', `session-${index}`);
       if ('error' in joined) throw new Error(joined.error);
       room = joined.state;
     }
-    expect(room.players).toHaveLength(100);
+    const eleven = addParticipant(room, 'player-10', 'Player 10', 'player', 'session-10');
+    if ('error' in eleven) throw new Error(eleven.error);
+    const rejected = reduceRoom(eleven.state, 'host', { t: 'start' }, 1000);
+    expect(rejected).toMatchObject({ error: 'Up to 10 players can start a game. Move extras to Spectator.' });
+    expect(rejected.state.phase).toBe('lobby');
 
-    // The deck only holds 178 Normal + TEAL cards, well short of 100 × 3.
-    const result = reduceRoom(room, 'host', { t: 'start' }, 1000);
-    expect(result).toMatchObject({ error: 'There are not enough Normal and TEAL cards to deal this many players' });
-    expect(result.state.phase).toBe('lobby');
+    const started = reduceRoom(room, 'host', { t: 'start' }, 1000);
+    if ('error' in started) throw new Error(started.error);
+    expect(started.state.phase).toBe('playing');
+    expect(started.state.players.every((player) => player.table.length === 3)).toBe(true);
+    expect(started.state.deck.length).toBe(218 - 7 * 10 - 1);
   });
 
   it('never restores a seat from its public participant ID', () => {
@@ -117,7 +158,7 @@ describe('room rules', () => {
     expect(passed.state.pendingAction).toBeNull();
     expect(passed.state.players.find((player) => player.id === active.id)?.table[0].revealed).toBe(false);
     expect(passed.state.turnEndsAt).toBe(62_000);
-    expect(passed.state.lastInterruptResult).toEqual({ kind: 'CONCEAL', outcome: 'resolved' });
+    expect(passed.state.lastInterruptResult).toEqual({ kind: 'CONCEAL', outcome: 'resolved', resolvedAt: 11_000 });
   });
 
   it('preserves a concealed card when stolen and reveals its identity only in authoritative state', () => {
@@ -127,6 +168,8 @@ describe('room rules', () => {
     if (!active || !target) throw new Error('Expected two players');
     target.table[0].revealed = false;
     const stolen = target.table[0].card;
+    // Remove the starting APPEAL so this STEAL resolves without an interrupt.
+    target.hand = target.hand.filter((card) => !(card.kind === 'action' && card.action === 'APPEAL'));
     active.hand.push({ id: 'steal-action', kind: 'action', action: 'STEAL' });
 
     const result = reduceRoom(room, active.id, {
@@ -180,7 +223,7 @@ describe('room rules', () => {
     const timedOut = processDeadlines(requester.state, 60_100);
     expect(timedOut.expiredRejoinIds).toEqual(['request']);
     expect(timedOut.state.spectators).toEqual([
-      { id: 'spectator-public', sessionIds: ['new-session'], name: 'Guest (spectator)', connected: true }
+      { id: 'spectator-public', sessionIds: ['new-session'], name: 'Guest (spectator)', connected: true, left: false }
     ]);
   });
 
@@ -203,6 +246,7 @@ describe('room rules', () => {
     const accepted = resolveRejoinRequest(request.state, request.state.hostId, 'req', true, 100);
     expect(accepted.acceptedPlayerId).toBe(targetPlayer.id);
     expect(accepted.result.state.players.find((player) => player.id === targetPlayer.id)?.connected).toBe(true);
+    expect(accepted.result.state.rejoinRequests).toHaveLength(0);
   });
 
   it('assigns next available Player N name when default name is taken', () => {
@@ -548,5 +592,168 @@ describe('host pause and resume', () => {
     const resumed = reduceRoom(paused.state, paused.state.hostId, { t: 'resume' }, 100_000);
     if ('error' in resumed) throw new Error(resumed.error);
     expect(resumed.state.rejoinRequests[0].expiresAt).toBe(150_000);
+  });
+
+  it('deals unique cards totalling the 218-card deck for every legal player count', () => {
+    fc.assert(fc.property(fc.integer({ min: 2, max: 10 }), (count) => {
+      const room = startRoomWithPlayers(count);
+      const cards = [
+        ...room.deck,
+        ...room.players.flatMap((player) => player.hand),
+        ...room.players.flatMap((player) => player.table.map((slot) => slot.card))
+      ];
+      expect(new Set(cards.map((card) => card.id)).size).toBe(DECK_SIZE);
+      expect(room.deck.length).toBe(DECK_SIZE - 7 * count - 1);
+      for (const player of room.players) {
+        expect(player.table).toHaveLength(3);
+        expect(player.table.every((slot) => slot.revealed)).toBe(true);
+        expect(player.hand.slice(0, 4).map((card) => card.kind === 'action' ? card.action : card.kind))
+          .toEqual(['CONCEAL', 'STEAL', 'REVEAL', 'APPEAL']);
+      }
+    }), { numRuns: 9 });
+  });
+
+  it('reproduces the same deal from the same seed', () => {
+    const first = startRoomWithPlayers(4, 'same-seed');
+    const second = startRoomWithPlayers(4, 'same-seed');
+    expect(first.deck.map((card) => card.id)).toEqual(second.deck.map((card) => card.id));
+    expect(first.players.map((player) => player.hand.map((card) => card.id)))
+      .toEqual(second.players.map((player) => player.hand.map((card) => card.id)));
+    expect(first.players.map((player) => player.table.map((slot) => slot.card.id)))
+      .toEqual(second.players.map((player) => player.table.map((slot) => slot.card.id)));
+  });
+
+  it('returns a finished room to a clean lobby while keeping present people and settings', () => {
+    let room = startRoomWithPlayers(3);
+    room.phase = 'finished';
+    room.winnerId = room.players[0].id;
+    room.winningSets = [[room.players[0].table[0].card.id]];
+    room.turnDurationSeconds = 45;
+    room.paused = true;
+    room.pauseRemaining = { turn: 10_000, interrupt: null, rejoin: {} };
+    room.pendingAction = null;
+    room.lastInterruptResult = { kind: 'REVEAL', outcome: 'resolved', resolvedAt: 9_000 };
+    room.rejoinRequests = [];
+    room.skipAfterInterrupt = true;
+    room.activePlayerId = room.players[1].id;
+    room.turnNumber = 9;
+    room.turnEndsAt = 50_000;
+    room.turnRemainingMs = 20_000;
+    room.players[2].away = true;
+    room.players[2].awayAt = 10_000;
+    room.spectators.push(
+      { id: 'spec-keep', sessionIds: ['spec-session'], name: 'Spec', connected: true, left: false },
+      { id: 'spec-drop', sessionIds: ['spec2-session'], name: 'Spec Two', connected: false, left: false }
+    );
+
+    expect(returnToLobby(room, room.players[1].id, 'fresh')).toMatchObject({ error: 'Only the host can return to the lobby' });
+    expect(returnToLobby(startTwoPlayerRoom(), startTwoPlayerRoom().hostId, 'fresh'))
+      .toMatchObject({ error: "The game isn't over yet" });
+
+    const reset = returnToLobby(room, room.hostId, 'fresh-seed');
+    if ('error' in reset) throw new Error(reset.error);
+    const next = reset.state;
+    expect(next.phase).toBe('lobby');
+    expect(next.players.map((player) => player.name)).toEqual(['Host', 'Player 1']);
+    expect(next.spectators.map((spectator) => spectator.name)).toEqual(['Spec']);
+    expect(next.hostId).toBe(room.hostId);
+    expect(next.turnDurationSeconds).toBe(45);
+    expect(next.deck).toEqual([]);
+    expect(next.activePlayerId).toBeNull();
+    expect(next.turnNumber).toBe(0);
+    expect(next.turnEndsAt).toBeNull();
+    expect(next.turnRemainingMs).toBeNull();
+    expect(next.pendingAction).toBeNull();
+    expect(next.lastInterruptResult).toBeNull();
+    expect(next.winnerId).toBeNull();
+    expect(next.winningSets).toBeNull();
+    expect(next.paused).toBe(false);
+    expect(next.pauseRemaining).toBeNull();
+    expect(next.rejoinRequests).toEqual([]);
+    expect(next.skipAfterInterrupt).toBe(false);
+    expect(next.randomSeed).toBe('fresh-seed');
+    expect(next.randomCounter).toBe(0);
+    for (const player of next.players) {
+      expect(player.hand).toEqual([]);
+      expect(player.table).toEqual([]);
+      expect(player.away).toBe(false);
+      expect(player.awayAt).toBeNull();
+      expect(player.left).toBe(false);
+    }
+    // The dropped default name is available again.
+    const rejoined = addParticipant(next, 'new-player', 'Player 2', 'player', 'new-session');
+    if ('error' in rejoined) throw new Error(rejoined.error);
+    expect(rejoined.state.players.some((player) => player.name === 'Player 2')).toBe(true);
+  });
+
+  it('starts the next game with a different seed after returning to the lobby', () => {
+    const first = startRoomWithPlayers(2, 'first-seed');
+    const firstDeck = first.deck.map((card) => card.id);
+    first.phase = 'finished';
+    first.winnerId = first.players[0].id;
+    const reset = returnToLobby(first, first.hostId, 'second-seed');
+    if ('error' in reset) throw new Error(reset.error);
+    const second = reduceRoom(reset.state, reset.state.hostId, { t: 'start' }, 2000);
+    if ('error' in second) throw new Error(second.error);
+    expect(second.state.randomSeed).not.toBe('first-seed');
+    expect(second.state.deck.map((card) => card.id)).not.toEqual(firstDeck);
+  });
+
+  it('leaveRoom removes a non-winner and frees their name', () => {
+    const room = finishedRoom();
+    const guest = room.players[1];
+    const result = leaveRoom(room, guest.id);
+    if ('error' in result.result) throw new Error(result.result.error);
+    expect(result.roomDeleted).toBeUndefined();
+    expect(result.result.state.players.map((player) => player.id)).toEqual([room.hostId]);
+    const reused = addParticipant(result.result.state, 'new', 'Guest', 'spectator', 'new-session');
+    if ('error' in reused) throw new Error(reused.error);
+    expect(reused.state.spectators.some((spectator) => spectator.name === 'Guest')).toBe(true);
+  });
+
+  it('keeps a leaving winner renderable until the reset and passes the host on', () => {
+    const room = finishedRoom();
+    const winner = room.players.find((player) => player.id === room.winnerId);
+    if (!winner) throw new Error('Expected a winner');
+    const result = leaveRoom(room, winner.id);
+    if ('error' in result.result) throw new Error(result.result.error);
+    const kept = result.result.state.players.find((player) => player.id === winner.id);
+    expect(kept?.left).toBe(true);
+    expect(result.result.state.winnerId).toBe(winner.id);
+    expect(result.result.state.hostId).not.toBe(winner.id);
+    expect(result.result.state.players.find((player) => player.id === result.result.state.hostId)?.connected).toBe(true);
+  });
+
+  it('cascades host succession through players in list order', () => {
+    const room = startRoomWithPlayers(3);
+    room.phase = 'finished';
+    room.winnerId = room.players[0].id;
+    const first = leaveRoom(room, room.hostId);
+    if ('error' in first.result) throw new Error(first.result.error);
+    expect(first.result.state.hostId).toBe(room.players[1].id);
+    const second = leaveRoom(first.result.state, first.result.state.hostId);
+    if ('error' in second.result) throw new Error(second.result.error);
+    expect(second.result.state.hostId).toBe(room.players[2].id);
+  });
+
+  it('deletes the room when the last member leaves', () => {
+    const room = finishedRoom();
+    const guest = room.players[1];
+    const first = leaveRoom(room, guest.id);
+    expect(first.roomDeleted).toBeUndefined();
+    if ('error' in first.result) throw new Error(first.result.error);
+    const last = leaveRoom(first.result.state, first.result.state.hostId);
+    expect(last.roomDeleted).toBe(true);
+  });
+
+  it('removes lobby members on leave and deletes an emptied room', () => {
+    const created = createRoom('ABCD', 'host', 'host-session', 'Host', 'seed');
+    const joined = addParticipant(created, 'guest', 'Guest', 'player', 'guest-session');
+    if ('error' in joined) throw new Error(joined.error);
+    const first = leaveRoom(joined.state, 'guest');
+    if ('error' in first.result) throw new Error(first.result.error);
+    expect(first.result.state.players.map((player) => player.id)).toEqual(['host']);
+    const last = leaveRoom(first.result.state, 'host');
+    expect(last.roomDeleted).toBe(true);
   });
 });

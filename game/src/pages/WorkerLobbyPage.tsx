@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { MAX_STARTING_PLAYERS } from '@3eal/engine';
 import { useRoom } from '../hooks/useRoom';
 import { usePresenceList } from '../hooks/usePresenceList';
 import TurnstileWidget from '../components/TurnstileWidget';
 import Panel from '../components/ui/Panel';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
-import Chip from '../components/ui/Chip';
 import ConnectionDot from '../components/ui/ConnectionDot';
 import SpinnerDots from '../components/ui/SpinnerDots';
 import { requestRoomCreation } from '../logic/createRoom';
@@ -41,9 +41,11 @@ function Avatar({ name }: { name: string }) {
 
 export default function WorkerLobbyPage({ roomCode, onStartGame, onLeave }: WorkerLobbyPageProps) {
   const name = sessionStorage.getItem('3eal-player-name') ?? 'Player 1';
-  const { view, status, error, clearError, send, rejoinRequests } = useRoom(roomCode, { name });
+  const { view, status, error, clearError, send, pending, left } = useRoom(roomCode, { name });
   const [validationError, setValidationError] = useState('');
   const [turnSeconds, setTurnSeconds] = useState(60);
+  const [timerText, setTimerText] = useState('60');
+  const [timerError, setTimerError] = useState('');
   const [newName, setNewName] = useState('');
   const [nameError, setNameError] = useState('');
   const [isEditingName, setIsEditingName] = useState(false);
@@ -57,8 +59,12 @@ export default function WorkerLobbyPage({ roomCode, onStartGame, onLeave }: Work
   const [createLobbyError, setCreateLobbyError] = useState('');
   const pendingName = useRef<string | null>(null);
   const copyTimer = useRef<number | undefined>(undefined);
+  const awaitingTimer = useRef(false);
+  const lastSentTimer = useRef<number | null>(null);
+  const roleRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   const data = viewData(view);
+  const authoritativeTurnSeconds = data?.turnDurationSeconds;
   const currentId = view?.role === 'player' ? view.data.you.id : sessionStorage.getItem(`3eal-session:${roomCode}`);
   const isHost = Boolean(data && currentId && data.hostId === currentId);
   const isLobby = data?.phase === 'lobby';
@@ -70,10 +76,15 @@ export default function WorkerLobbyPage({ roomCode, onStartGame, onLeave }: Work
 
   const people = usePresenceList(useMemo(() => [...players, ...spectators], [players, spectators]));
   const playerIds = new Set(players.map((player) => player.id));
+  const hostRejoinRequests = view?.role === 'player' ? view.data.you.rejoinRequests : [];
 
   useEffect(() => {
     if (view && view.data.phase !== 'lobby') onStartGame();
   }, [view, onStartGame]);
+
+  useEffect(() => {
+    if (left) onLeave();
+  }, [left, onLeave]);
 
   // Validate room code format
   useEffect(() => {
@@ -87,9 +98,26 @@ export default function WorkerLobbyPage({ roomCode, onStartGame, onLeave }: Work
     }
   }, [status, view, error]);
 
+  // Only a new authoritative timer value resets the field; ordinary snapshots
+  // must not clobber digits while the host is typing.
   useEffect(() => {
-    if (data) setTurnSeconds(data.turnDurationSeconds);
-  }, [data]);
+    if (authoritativeTurnSeconds === undefined) return;
+    setTurnSeconds(authoritativeTurnSeconds);
+    setTimerText(String(authoritativeTurnSeconds));
+    setTimerError('');
+    awaitingTimer.current = false;
+    lastSentTimer.current = authoritativeTurnSeconds;
+  }, [authoritativeTurnSeconds]);
+
+  // A rejected timer update reverts to the server's previous value.
+  useEffect(() => {
+    if (!awaitingTimer.current || !error || !data) return;
+    setTimerError(error);
+    setTurnSeconds(data.turnDurationSeconds);
+    setTimerText(String(data.turnDurationSeconds));
+    awaitingTimer.current = false;
+    lastSentTimer.current = data.turnDurationSeconds;
+  }, [error, data]);
 
   // Update stored name when the server assigns/confirms one, and close the
   // inline editor once our requested name lands.
@@ -164,12 +192,52 @@ export default function WorkerLobbyPage({ roomCode, onStartGame, onLeave }: Work
     send({ t: 'changeName', name: trimmed });
   };
 
-  const commitTurnSeconds = (value: number) => {
-    if (Number.isInteger(value) && value >= 15 && value <= 180) {
-      if (data && value !== data.turnDurationSeconds) send({ t: 'setTurnTimer', seconds: value });
-    } else if (data) {
-      setTurnSeconds(data.turnDurationSeconds);
+  const setSliderSeconds = (value: number) => {
+    setTurnSeconds(value);
+    setTimerText(String(value));
+  };
+
+  const commitTurnSeconds = () => {
+    if (!data) return;
+    const parsed = Number(timerText);
+    if (!timerText.trim() || !Number.isFinite(parsed)) {
+      setSliderSeconds(data.turnDurationSeconds);
+      return;
     }
+    const clamped = Math.min(180, Math.max(15, Math.round(parsed)));
+    setSliderSeconds(clamped);
+    if (clamped === data.turnDurationSeconds && !awaitingTimer.current) return;
+    // Enter commits and then blurs the field; do not send the same value twice.
+    if (awaitingTimer.current && clamped === lastSentTimer.current) return;
+    awaitingTimer.current = true;
+    lastSentTimer.current = clamped;
+    setTimerError('');
+    const sent = send({ t: 'setTurnTimer', seconds: clamped });
+    if (!sent) {
+      awaitingTimer.current = false;
+      lastSentTimer.current = data.turnDurationSeconds;
+    }
+  };
+
+  const chooseRole = (role: 'player' | 'spectator') => {
+    if (view?.role === role) return;
+    send({ t: 'setRole', role });
+  };
+
+  const onRoleKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+    event.preventDefault();
+    const roles: Array<'player' | 'spectator'> = ['player', 'spectator'];
+    const current = Math.max(0, roles.indexOf(view?.role ?? 'player'));
+    const direction = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : -1;
+    const nextIndex = (current + direction + roles.length) % roles.length;
+    chooseRole(roles[nextIndex]);
+    roleRefs.current[nextIndex]?.focus();
+  };
+
+  const handleLeaveRoom = () => {
+    if (pending) return;
+    if (!send({ t: 'leaveRoom' }, { pending: 'Leaving the lobby…', confirmation: 'You left the lobby.' })) onLeave();
   };
 
   const requestRejoin = () => {
@@ -270,11 +338,13 @@ export default function WorkerLobbyPage({ roomCode, onStartGame, onLeave }: Work
     );
   };
 
-  const startDisabledReason = players.length < 2
-    ? 'Add at least one more player to start.'
-    : status !== 'connected'
-      ? 'Waiting for the connection to come back.'
-      : '';
+  const startDisabledReason = players.length > MAX_STARTING_PLAYERS
+    ? `Up to ${MAX_STARTING_PLAYERS} players can start a game. Move extras to Spectator.`
+    : players.length < 2
+      ? 'Add at least one more player to start.'
+      : status !== 'connected'
+        ? 'Waiting for the connection to come back.'
+        : '';
 
   return (
     <main className="min-h-screen bg-black px-4 py-8 text-white sm:py-12">
@@ -397,25 +467,33 @@ export default function WorkerLobbyPage({ roomCode, onStartGame, onLeave }: Work
           {/* Role switch */}
           <div className="mt-5 border-t border-line pt-5">
             <p className="mb-2 text-xs text-white/50">Play as</p>
-            <div className="inline-flex rounded-full border border-line bg-white/[0.02] p-1" role="group" aria-label="Role">
-              <Button
-                size="sm"
-                variant={view?.role === 'player' ? 'primary' : 'ghost'}
-                aria-pressed={view?.role === 'player'}
-                disabled={view?.role === 'player'}
-                onClick={() => send({ t: 'setRole', role: 'player' })}
-              >
-                Player
-              </Button>
-              <Button
-                size="sm"
-                variant={view?.role === 'spectator' ? 'primary' : 'ghost'}
-                aria-pressed={view?.role === 'spectator'}
-                disabled={view?.role === 'spectator'}
-                onClick={() => send({ t: 'setRole', role: 'spectator' })}
-              >
-                Spectator
-              </Button>
+            <div
+              className="flex w-full overflow-visible rounded-xl border border-white/10 bg-white/[0.03] p-1"
+              role="radiogroup"
+              aria-label="Play as"
+            >
+              {(['player', 'spectator'] as const).map((role, index) => {
+                const selected = (view?.role ?? 'player') === role;
+                return (
+                  <button
+                    key={role}
+                    ref={(element) => { roleRefs.current[index] = element; }}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    tabIndex={selected ? 0 : -1}
+                    onClick={() => chooseRole(role)}
+                    onKeyDown={onRoleKeyDown}
+                    className={`min-h-11 flex-1 rounded-lg px-3 text-sm font-semibold transition motion-safe:duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white ${
+                      selected
+                        ? 'bg-white/15 text-white'
+                        : 'text-white/60 hover:bg-white/5 hover:text-white'
+                    }`}
+                  >
+                    {role === 'player' ? 'Player' : 'Spectator'}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -434,30 +512,59 @@ export default function WorkerLobbyPage({ roomCode, onStartGame, onLeave }: Work
             <h2 className="mb-4 text-sm font-semibold text-white/70">Host controls</h2>
 
             <div className="mb-5">
-              <div className="mb-2 flex items-center justify-between gap-3">
-                <label htmlFor="turn-timer" className="text-sm text-white/70">Turn timer</label>
-                <Chip>{turnSeconds}s</Chip>
+              <label htmlFor="turn-timer" className="mb-2 block text-sm text-white/70">Turn timer</label>
+              <div className="flex items-center gap-2">
+                <input
+                  id="turn-timer"
+                  type="range"
+                  min={15}
+                  max={180}
+                  step={5}
+                  value={turnSeconds}
+                  onChange={(event) => setSliderSeconds(Number(event.target.value))}
+                  onPointerUp={commitTurnSeconds}
+                  onKeyUp={(event) => {
+                    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) {
+                      commitTurnSeconds();
+                    }
+                  }}
+                  onBlur={commitTurnSeconds}
+                  className="h-11 min-w-0 flex-1 cursor-pointer appearance-none bg-transparent [&::-moz-range-thumb]:h-5 [&::-moz-range-thumb]:w-5 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-white [&::-moz-range-track]:h-2 [&::-moz-range-track]:rounded-full [&::-moz-range-track]:bg-white/15 [&::-webkit-slider-runnable-track]:h-2 [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:bg-white/15 [&::-webkit-slider-thumb]:mt-[-6px] [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white"
+                />
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={timerText}
+                  aria-label="Turn timer in seconds"
+                  onChange={(event) => {
+                    const digits = event.target.value.replace(/\D/g, '').slice(0, 3);
+                    setTimerText(digits);
+                    if (digits) {
+                      const numeric = Number(digits);
+                      setTurnSeconds(Math.min(180, Math.max(15, numeric)));
+                    }
+                  }}
+                  onBlur={commitTurnSeconds}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      commitTurnSeconds();
+                      event.currentTarget.blur();
+                    }
+                  }}
+                  className="h-11 w-[4.5rem] shrink-0 rounded-[var(--radius-control)] border border-line bg-white/[0.03] px-2 text-center font-mono tabular-nums text-white focus:border-white/60 focus:outline-none focus:ring-4 focus:ring-white/10"
+                />
+                <span className="text-sm text-white/50">seconds</span>
               </div>
-              <input
-                id="turn-timer"
-                type="range"
-                min={15}
-                max={180}
-                step={5}
-                value={turnSeconds}
-                onChange={(event) => setTurnSeconds(Number(event.target.value))}
-                onPointerUp={() => commitTurnSeconds(turnSeconds)}
-                onBlur={() => commitTurnSeconds(turnSeconds)}
-                className="h-2 w-full cursor-pointer appearance-none rounded-full bg-white/15 accent-white"
-              />
               <p className="mt-1 text-xs text-white/40">15–180 seconds · default 60</p>
+              {timerError && <p className="mt-1 text-xs text-rose-300" data-testid="timer-error">{timerError}</p>}
             </div>
 
             <Button
               variant="primary"
               size="lg"
               fullWidth
-              disabled={players.length < 2 || status !== 'connected'}
+              disabled={players.length < 2 || players.length > MAX_STARTING_PLAYERS || status !== 'connected'}
               onClick={() => send({ t: 'start' })}
             >
               Start game
@@ -476,11 +583,11 @@ export default function WorkerLobbyPage({ roomCode, onStartGame, onLeave }: Work
         )}
 
         {/* Rejoin requests (host) */}
-        {rejoinRequests.length > 0 && isHost && (
+        {hostRejoinRequests.length > 0 && isHost && (
           <Panel padding="roomy" className="mt-4">
             <h2 className="mb-3 text-sm font-semibold text-white/70">Rejoin requests</h2>
             <ul className="space-y-2">
-              {rejoinRequests.map((request) => (
+              {hostRejoinRequests.map((request) => (
                 <li key={request.requestId} className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius-control)] border border-line p-3">
                   <span>{request.name} wants to rejoin.</span>
                   <div className="flex gap-2">
@@ -500,7 +607,9 @@ export default function WorkerLobbyPage({ roomCode, onStartGame, onLeave }: Work
         {error && !isEditingName && <p className="mt-4 text-center text-sm text-rose-300" role="alert">{error}</p>}
 
         <div className="mt-6 flex justify-center">
-          <Button variant="ghost" onClick={onLeave}>Leave room</Button>
+          <Button variant="ghost" disabled={pending !== null} onClick={handleLeaveRoom}>
+            {pending ? 'Leaving…' : 'Leave room'}
+          </Button>
         </div>
       </div>
     </main>

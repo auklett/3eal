@@ -16,6 +16,8 @@ import IconButton from '../components/ui/IconButton';
 import ConnectionDot from '../components/ui/ConnectionDot';
 import SpinnerDots from '../components/ui/SpinnerDots';
 import RulesOverlay from '../components/game/RulesOverlay';
+import NoticeStack from '../components/game/NoticeStack';
+import { CloseIcon } from '../components/icons/IconSprite';
 
 interface WorkerGameBoardProps {
   roomCode: string;
@@ -142,9 +144,27 @@ function PlayersGlyph() {
   );
 }
 
+function RulesGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5Z" />
+      <path d="M4 5.5v15M8 7h8M8 10h6" />
+    </svg>
+  );
+}
+
+function LeaveGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4" />
+      <path d="M10 8l-4 4 4 4M6 12h10" />
+    </svg>
+  );
+}
+
 export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: WorkerGameBoardProps) {
   const playerName = sessionStorage.getItem('3eal-player-name') ?? 'Player 1';
-  const { view, status, error, send, rejoinRequests, pending, confirmation } = useRoom(roomCode, { name: playerName });
+  const { view, status, error, send, pending, confirmation, left } = useRoom(roomCode, { name: playerName });
   const [selectedHandId, setSelectedHandId] = useState<string | null>(null);
   const [tableSelection, setTableSelection] = useState<number | null>(null);
   const [rejoinName, setRejoinName] = useState('');
@@ -155,6 +175,7 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
   const [hintDismissed, setHintDismissed] = useState(() => localStorage.getItem('3eal-table-hint-dismissed') === 'true');
   const [announcement, setAnnouncement] = useState('');
   const [now, setNow] = useState(Date.now());
+  const [resultNotice, setResultNotice] = useState<string | null>(null);
   const [drag, setDrag] = useState<DragMeta & { x: number; y: number } | null>(null);
   const [dragOver, setDragOver] = useState<DragOver>(null);
   const [pendingMoveKind, setPendingMoveKind] = useState<'place' | 'toHand' | null>(null);
@@ -167,7 +188,12 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
   const suppressClick = useRef(false);
   const dialogRef = useRef<HTMLElement | null>(null);
   const opponentDialogRef = useRef<HTMLElement | null>(null);
+  const gameOverHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const announcedKey = useRef<string | null>(null);
+  const finishedHandled = useRef(false);
+  const resultSeenKey = useRef<string | null>(null);
+  const resultTurn = useRef<number | null>(null);
+  const rejoinCount = useRef(0);
 
   const closePlayers = useMemo(() => () => setShowPlayers(false), []);
   const closeOpponent = useMemo(() => () => setSelectedOpponentId(null), []);
@@ -192,6 +218,82 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
     if (view?.data.phase === 'lobby') onReturnToLobby();
   }, [view?.data.phase, onReturnToLobby]);
 
+  useEffect(() => {
+    if (left) onLeave();
+  }, [left, onLeave]);
+
+  // Keep the roster overlay host-only even if ownership transfers mid-session.
+  useEffect(() => {
+    if (!view) return;
+    if (activeId(view, roomCode) !== view.data.hostId) setShowPlayers(false);
+  }, [view, roomCode]);
+
+  const finishedWinnerName = view?.data.winnerId
+    ? view.data.players.find((player) => player.id === view.data.winnerId)?.name
+    : undefined;
+  const lastResult = view?.data.lastInterruptResult;
+  const resultKey = lastResult
+    ? `${lastResult.kind}|${lastResult.outcome}|${lastResult.resolvedAt}`
+    : null;
+  const resultText = lastResult
+    ? `${lastResult.kind} ${lastResult.outcome === 'appealed' ? 'was appealed' : lastResult.outcome === 'expired' ? 'expired' : 'resolved'}.`
+    : null;
+
+  // Game Over moves to the top of the board when the phase flips. Scroll there,
+  // focus its heading, and announce the result exactly once per finished phase.
+  useEffect(() => {
+    if (!view) return;
+    if (view.data.phase !== 'finished') {
+      finishedHandled.current = false;
+      return;
+    }
+    if (finishedHandled.current) return;
+    finishedHandled.current = true;
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    window.scrollTo({ top: 0, behavior: reduced ? 'auto' : 'smooth' });
+    setAnnouncement(`Game over, ${finishedWinnerName ?? 'a player'} wins`);
+    window.requestAnimationFrame(() => gameOverHeadingRef.current?.focus({ preventScroll: true }));
+  }, [view, finishedWinnerName]);
+
+  // The result notice is keyed on the server's resolvedAt so the same snapshot
+  // never re-shows it, survives a reconnect, and clears on the turn transition.
+  useEffect(() => {
+    if (!resultKey || !resultText) {
+      setResultNotice(null);
+      return;
+    }
+    if (resultSeenKey.current === resultKey) return;
+    const storageKey = `3eal-result-seen:${roomCode}`;
+    if (sessionStorage.getItem(storageKey) === resultKey) {
+      resultSeenKey.current = resultKey;
+      return;
+    }
+    resultSeenKey.current = resultKey;
+    resultTurn.current = view?.data.turnNumber ?? 0;
+    sessionStorage.setItem(storageKey, resultKey);
+    setResultNotice(resultText);
+    const timer = window.setTimeout(() => setResultNotice(null), 5000);
+    return () => window.clearTimeout(timer);
+  }, [resultKey, resultText, roomCode, view?.data.turnNumber]);
+
+  useEffect(() => {
+    const turn = view?.data.turnNumber;
+    if (turn === undefined) return;
+    if (resultTurn.current !== null && resultTurn.current !== turn) {
+      setResultNotice(null);
+      resultTurn.current = null;
+    }
+  }, [view?.data.turnNumber]);
+
+  const visibleRejoinRequests = view?.role === 'player' ? view.data.you.rejoinRequests : [];
+  useEffect(() => {
+    const count = visibleRejoinRequests.length;
+    if (count > rejoinCount.current) {
+      setAnnouncement(count === 1 ? 'A player wants to rejoin.' : `${count} players want to rejoin.`);
+    }
+    rejoinCount.current = count;
+  }, [visibleRejoinRequests.length]);
+
   // Keep the in-flight move's button mounted but disabled until the server
   // answers, so a second click cannot send a duplicate.
   useEffect(() => {
@@ -214,8 +316,12 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
     if (announcedKey.current === key) return;
     announcedKey.current = key;
     const active = data.players.find((player) => player.id === data.activePlayerId);
-    if (data.phase === 'finished') setAnnouncement('Game over');
-    else if (data.paused) setAnnouncement('Game paused by host');
+    if (data.phase === 'finished') {
+      const finishedWinner = data.winnerId
+        ? data.players.find((player) => player.id === data.winnerId)?.name
+        : undefined;
+      setAnnouncement(`Game over, ${finishedWinner ?? 'a player'} wins`);
+    } else if (data.paused) setAnnouncement('Game paused by host');
     else if (intr) setAnnouncement(`Interrupt open: ${intr.kind}`);
     else if (myTurn) setAnnouncement('Your turn');
     else if (active) setAnnouncement(`${active.name}'s turn`);
@@ -285,13 +391,15 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
     ? Math.max(0, Math.ceil(data.pauseRemaining.interrupt / 1000))
     : null;
 
-  const turnSeconds = data.paused
-    ? frozenTurnSeconds
-    : data.turnEndsAt !== null
-      ? Math.max(0, Math.ceil((data.turnEndsAt - now) / 1000))
-      : data.turnRemainingMs === null
-        ? null
-        : Math.ceil(data.turnRemainingMs / 1000);
+  const turnSeconds = data.phase === 'finished'
+    ? null
+    : data.paused
+      ? frozenTurnSeconds
+      : data.turnEndsAt !== null
+        ? Math.max(0, Math.ceil((data.turnEndsAt - now) / 1000))
+        : data.turnRemainingMs === null
+          ? null
+          : Math.ceil(data.turnRemainingMs / 1000);
 
   const interruptSeconds = interrupt
     ? data.paused
@@ -608,26 +716,194 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
   const handNormals = hand.filter((card) => card.kind !== 'action');
   const handActions = hand.filter((card) => card.kind === 'action');
   const showAppealSheet = Boolean(view.role === 'player' && isEligible && appealCard && interrupt);
+  const actionBusy = pending !== null;
+
+  const handleReturnToLobby = () => {
+    if (actionBusy) return;
+    send({ t: 'returnToLobby' }, { pending: 'Returning to the lobby…', confirmation: 'Lobby ready.' });
+  };
+
+  const handleLeaveLobby = () => {
+    if (actionBusy) return;
+    send({ t: 'leaveRoom' }, { pending: 'Leaving the lobby…', confirmation: 'You left the lobby.' });
+  };
 
   return (
     <main className="relative min-h-screen bg-black text-white">
       <div className="sr-only" aria-live="polite" aria-atomic="true">{announcement}</div>
 
       {/* Top bar */}
-      <header className="sticky top-0 z-40 border-b border-line bg-black/85 backdrop-blur">
+      <header className="sticky top-0 z-40 border-b border-line bg-black/85 pt-[env(safe-area-inset-top)] backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center gap-2 px-3 py-2 sm:px-6">
           <span className="text-lg font-black tracking-[0.16em]">3EAL</span>
           <Chip title="Room code">{roomCode}</Chip>
           <ConnectionDot connected={status === 'connected'} />
           {status !== 'connected' && <span className="hidden text-xs text-amber-200 sm:inline">Reconnecting…</span>}
           <div className="ml-auto flex items-center gap-1.5">
-            <Button size="sm" variant="ghost" icon={<PlayersGlyph />} onClick={() => setShowPlayers(true)}>Players</Button>
-            <Button size="sm" variant="ghost" onClick={onLeave}>Leave</Button>
+            {isHost && (
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={<PlayersGlyph />}
+                aria-label="Players"
+                onClick={() => setShowPlayers(true)}
+              >
+                <span className="hidden sm:inline">Players</span>
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={<RulesGlyph />}
+              aria-label="Rules"
+              onClick={() => setShowRules(true)}
+            >
+              <span className="hidden sm:inline">Rules</span>
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={<LeaveGlyph />}
+              aria-label="Leave"
+              onClick={onLeave}
+            >
+              <span className="hidden sm:inline">Leave</span>
+            </Button>
           </div>
         </div>
       </header>
 
+      <NoticeStack>
+        {showAppealSheet && interrupt && appealCard && (
+          <Panel padding="compact" className="bg-black/95 shadow-2xl">
+            <div className="flex items-center gap-3">
+              <div className="shrink-0">
+                <CardComponent card={toUiCard(appealCard)} size="xs" showRevealBadge={false} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold">Play APPEAL?</p>
+                <p className="mt-0.5 text-xs text-white/60">
+                  {interrupt.kind} · APPEAL cancels it. {data.paused ? 'Paused — frozen.' : '30 seconds max.'}
+                </p>
+                <div className="mt-1 flex items-center gap-2">
+                  <AppealRing seconds={interruptSeconds} paused={data.paused} />
+                  <span className="text-[11px] text-white/50">{data.paused ? 'frozen' : 'seconds to decide'}</span>
+                </div>
+              </div>
+              <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
+                <Button
+                  variant="primary"
+                  size="sm"
+                  className="min-w-24"
+                  disabled={data.paused}
+                  onClick={() => send({ t: 'appeal', cardId: appealCard.id })}
+                >
+                  {data.paused ? 'APPEAL (Paused)' : 'APPEAL'}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="min-w-24"
+                  disabled={data.paused}
+                  onClick={() => send({ t: 'pass' })}
+                >
+                  {data.paused ? 'Pass (Paused)' : 'Pass'}
+                </Button>
+              </div>
+            </div>
+          </Panel>
+        )}
+
+        {isHost && visibleRejoinRequests.map((request) => (
+          <Panel key={request.requestId} padding="compact" className="bg-black/95 shadow-2xl">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span className="text-sm">{request.name} wants to rejoin.</span>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onClick={() => send({ t: 'rejoinDecision', requestId: request.requestId, accept: true })}
+                >
+                  Approve
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => send({ t: 'rejoinDecision', requestId: request.requestId, accept: false })}
+                >
+                  Decline
+                </Button>
+              </div>
+            </div>
+          </Panel>
+        ))}
+
+        {interrupt && !showAppealSheet && (
+          <Panel padding="compact" className="bg-black/95 shadow-2xl">
+            <p className="flex items-center justify-center gap-2 text-sm text-white/70" role="status">
+              {view.role === 'player' && isEligible && !appealCard
+                ? 'No APPEAL in Hand · passing automatically'
+                : `Waiting on a decision…${data.paused ? ' (paused)' : ''}`}
+              <SpinnerDots className="text-white/40" />
+            </p>
+          </Panel>
+        )}
+      </NoticeStack>
+
       <div className="mx-auto max-w-6xl px-3 pb-72 pt-3 sm:px-6 md:pb-8">
+        {/* Game Over is the first board element, directly under the top bar. */}
+        {data.phase === 'finished' && (
+          <Panel padding="roomy" className="relative mb-3 overflow-hidden text-center" aria-labelledby="game-over-title">
+            <h2 id="game-over-title" ref={gameOverHeadingRef} tabIndex={-1} className="text-2xl font-semibold outline-none">
+              Game over
+            </h2>
+            <p className="my-2 text-lg">{winner?.name ?? 'A player'} wins</p>
+
+            <div className="mt-4">
+              <h3 className="mb-3 text-sm font-semibold text-white/70">Winning sets</h3>
+              {winnerSets && (
+                <div className="mb-4 grid gap-4 md:grid-cols-3">
+                  {winnerSets.map((group, setIndex) => (
+                    <div key={`set-${setIndex}`} className="rounded-[var(--radius-control)] border border-line bg-white/[0.03] p-3">
+                      <p className="mb-2 text-xs tracking-[0.12em] text-white/50">Set {setIndex + 1}</p>
+                      <div className="flex items-center justify-center gap-2">
+                        {group.map((card, cardIndex) => (
+                          <span key={`${card.id}-${cardIndex}`} className="inline-flex motion-safe:animate-pop-in">
+                            <CardComponent
+                              card={toUiCard(card, true)}
+                              size={group.length > 3 ? 'sm' : 'md'}
+                              showRevealBadge={false}
+                            />
+                          </span>
+                        ))}
+                        {group.length === 0 && <span className="py-6 text-sm text-white/40">—</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p className="text-sm text-white/60">Each group shows a set of 3 matching cards (by color, number, or shape).</p>
+            </div>
+
+            <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+              {isHost ? (
+                <Button variant="primary" disabled={actionBusy} onClick={handleReturnToLobby}>
+                  Return to Lobby
+                </Button>
+              ) : (
+                <p className="flex items-center gap-2 text-sm text-white/60" role="status">
+                  Waiting for the host to return to the lobby
+                  <SpinnerDots className="text-white/40" />
+                </p>
+              )}
+              <Button variant="secondary" disabled={actionBusy} onClick={handleLeaveLobby}>
+                Leave Lobby
+              </Button>
+            </div>
+            {pending && <p className="mt-3 text-xs text-amber-100">{pending}</p>}
+          </Panel>
+        )}
+
         {/* Turn banner */}
         <Panel
           padding="compact"
@@ -640,9 +916,14 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
             <Badge tone={data.paused ? 'warn' : isMyTurn ? 'accent' : 'neutral'}>{phaseLabel}</Badge>
             <p key={`turn-${data.activePlayerId ?? 'none'}-${data.paused}-${data.phase}`} className="font-semibold motion-safe:animate-fade-in" aria-live="polite">{turnText}</p>
+            {resultNotice && (
+              <span className="text-sm text-amber-100 motion-safe:animate-fade-in" role="status">
+                {resultNotice}
+              </span>
+            )}
 
             <div className="ml-auto flex flex-wrap items-center gap-2">
-              {interrupt ? (
+              {data.phase !== 'finished' && (interrupt ? (
                 <>
                   <Chip className="text-amber-100" title="Turn timer paused during an interrupt">Turn paused</Chip>
                   <span className="flex items-center gap-1.5 text-xs text-amber-100">
@@ -664,7 +945,7 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
                       : turnSeconds === null ? '--' : `${turnSeconds}s`}
                   </span>
                 </span>
-              )}
+              ))}
               <Chip>Deck {data.deckCount}</Chip>
               {isHost && data.phase === 'playing' && !data.paused && (
                 <Button size="sm" variant="secondary" onClick={() => send({ t: 'pause' })}>Pause</Button>
@@ -678,11 +959,6 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
 
         {/* Errors must be the single role=alert on the board. */}
         {error && <p className="mb-3 text-center text-sm text-rose-300" role="alert">{error}</p>}
-        {data.lastInterruptResult && (
-          <p className="mb-3 text-center text-sm text-amber-100" role="status">
-            {data.lastInterruptResult.kind} {data.lastInterruptResult.outcome === 'appealed' ? 'was appealed' : 'resolved'}.
-          </p>
-        )}
 
         {/* Action targeting step indicator (non-blocking: the board stays live). */}
         {targetForAction && (
@@ -704,16 +980,6 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
             </div>
             <Button size="sm" variant="secondary" onClick={() => { setSelectedHandId(null); setTableSelection(null); }}>Cancel</Button>
           </Panel>
-        )}
-
-        {/* Interrupt non-blocking notice */}
-        {interrupt && !showAppealSheet && (
-          <p className="mb-3 flex items-center justify-center gap-2 text-sm text-white/60" role="status">
-            {view.role === 'player' && isEligible && !appealCard
-              ? 'No APPEAL in Hand · passing automatically'
-              : `Waiting on a decision…${data.paused ? ' (paused)' : ''}`}
-            <SpinnerDots className="text-white/40" />
-          </p>
         )}
 
         {/* Opponents rail */}
@@ -937,106 +1203,7 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
             </Panel>
           )}
         </section>
-
-        {/* Game over */}
-        {data.phase === 'finished' && (
-          <Panel padding="roomy" className="relative mt-5 overflow-hidden text-center">
-            <h2 className="text-2xl font-semibold">Game over</h2>
-            <p className="my-2 text-lg">{winner?.name ?? 'A player'} wins</p>
-
-            <div className="mt-4">
-              <h3 className="mb-3 text-sm font-semibold text-white/70">Winning sets</h3>
-              {winnerSets && (
-                <div className="mb-4 grid gap-4 md:grid-cols-3">
-                  {winnerSets.map((group, setIndex) => (
-                    <div key={`set-${setIndex}`} className="rounded-[var(--radius-control)] border border-line bg-white/[0.03] p-3">
-                      <p className="mb-2 text-xs tracking-[0.12em] text-white/50">Set {setIndex + 1}</p>
-                      <div className="flex items-center justify-center gap-2">
-                        {group.map((card, cardIndex) => (
-                          <span key={`${card.id}-${cardIndex}`} className="inline-flex motion-safe:animate-pop-in">
-                            <CardComponent
-                              card={toUiCard(card, true)}
-                              size={group.length > 3 ? 'sm' : 'md'}
-                              showRevealBadge={false}
-                            />
-                          </span>
-                        ))}
-                        {group.length === 0 && <span className="py-6 text-sm text-white/40">—</span>}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <p className="text-sm text-white/60">Each group shows a set of 3 matching cards (by color, number, or shape).</p>
-            </div>
-
-            <div className="mt-6 flex flex-wrap justify-center gap-3">
-              {isHost && <Button variant="secondary" onClick={() => send({ t: 'rematch' })}>Rematch</Button>}
-              <Button variant="primary" onClick={onReturnToLobby}>Return to Lobby</Button>
-              <Button variant="ghost" onClick={onLeave}>Main Page</Button>
-            </div>
-          </Panel>
-        )}
-
-        {/* Rejoin requests (host) */}
-        {rejoinRequests.length > 0 && isHost && (
-          <Panel padding="roomy" className="mt-5">
-            <h2 className="mb-3 text-sm font-semibold text-white/70">Rejoin requests</h2>
-            {rejoinRequests.map((request) => (
-              <div key={request.requestId} className="flex items-center justify-between gap-3 py-2">
-                <span>{request.name} wants to rejoin.</span>
-                <div className="flex gap-2">
-                  <Button size="sm" variant="primary" onClick={() => send({ t: 'rejoinDecision', requestId: request.requestId, accept: true })}>Approve</Button>
-                  <Button size="sm" variant="ghost" onClick={() => send({ t: 'rejoinDecision', requestId: request.requestId, accept: false })}>Decline</Button>
-                </div>
-              </div>
-            ))}
-          </Panel>
-        )}
       </div>
-
-      {/* Appeal bottom sheet (non-modal: it never blocks the rest of the board). */}
-      {showAppealSheet && interrupt && appealCard && (
-        <div className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex justify-center p-3 sm:p-6">
-          <Panel padding="roomy" className="pointer-events-auto w-full max-w-md bg-black/95 shadow-2xl">
-            <div className="flex items-start gap-4">
-              <div className="shrink-0">
-                <CardComponent card={toUiCard(appealCard)} size="sm" showRevealBadge={false} />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="font-semibold">Play APPEAL?</p>
-                <p className="mt-1 text-sm text-white/60">
-                  Someone played {interrupt.kind}. APPEAL cancels it; both cards return to the deck.
-                </p>
-                <div className="mt-3 flex items-center gap-3">
-                  <AppealRing seconds={interruptSeconds} paused={data.paused} />
-                  <span className="text-xs text-white/50">{data.paused ? 'Paused — frozen' : 'seconds to decide'}</span>
-                </div>
-              </div>
-            </div>
-            <div className="mt-4 flex gap-2">
-              <Button
-                variant="primary"
-                size="lg"
-                className="flex-1"
-                disabled={data.paused}
-                onClick={() => send({ t: 'appeal', cardId: appealCard.id })}
-              >
-                {data.paused ? 'APPEAL (Paused)' : 'APPEAL'}
-              </Button>
-              <Button
-                variant="secondary"
-                size="lg"
-                className="flex-1"
-                disabled={data.paused}
-                onClick={() => send({ t: 'pass' })}
-              >
-                {data.paused ? 'Pass (Paused)' : 'Pass'}
-              </Button>
-            </div>
-          </Panel>
-        </div>
-      )}
 
       {/* Opponent table modal */}
       {selectedOpponent && (
@@ -1066,7 +1233,7 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
                   </details>
                 )}
                 <IconButton label="Close table" onClick={() => setSelectedOpponentId(null)}>
-                  <span aria-hidden="true" className="text-xl leading-none">×</span>
+                  <CloseIcon />
                 </IconButton>
               </div>
             </div>
@@ -1091,12 +1258,9 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
           >
             <div className="mb-5 flex items-center justify-between gap-4">
               <h2 id="players-title" className="text-2xl font-semibold">Players</h2>
-              <div className="flex items-center gap-2">
-                <Button size="sm" variant="ghost" onClick={() => setShowRules(true)}>Rules</Button>
-                <IconButton label="Close players" onClick={() => setShowPlayers(false)}>
-                  <span aria-hidden="true" className="text-xl leading-none">×</span>
-                </IconButton>
-              </div>
+              <IconButton label="Close players" onClick={() => setShowPlayers(false)}>
+                <CloseIcon />
+              </IconButton>
             </div>
             <ul className="space-y-2">
               {data.players.map((player) => (

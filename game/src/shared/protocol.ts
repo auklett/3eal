@@ -29,7 +29,8 @@ export const ClientMsgSchema = z.discriminatedUnion('t', [
   z.object({ t: z.literal('rejoin'), name: nameSchema, sessionId: playerIdSchema }).strict(),
   z.object({ t: z.literal('rejoinDecision'), requestId: z.string().uuid(), accept: z.boolean() }).strict(),
   z.object({ t: z.literal('kick'), targetId: playerIdSchema }).strict(),
-  z.object({ t: z.literal('rematch') }).strict(),
+  z.object({ t: z.literal('returnToLobby') }).strict(),
+  z.object({ t: z.literal('leaveRoom') }).strict(),
   z.object({ t: z.literal('changeName'), name: nameSchema }).strict()
 ]);
 
@@ -87,7 +88,8 @@ const PublicInterruptSchema = z.object({
 
 const LastInterruptResultSchema = z.object({
   kind: z.enum(['CONCEAL', 'STEAL', 'REVEAL']),
-  outcome: z.enum(['appealed', 'resolved', 'expired'])
+  outcome: z.enum(['appealed', 'resolved', 'expired']),
+  resolvedAt: z.number().int()
 }).strict();
 
 const PauseRemainingSchema = z.object({
@@ -127,7 +129,12 @@ export const ViewSchema = z.discriminatedUnion('role', [
       you: z.object({
         id: playerIdSchema,
         hand: z.array(CardSchema),
-        concealedOwn: z.record(z.string(), TableCardSchema)
+        concealedOwn: z.record(z.string(), TableCardSchema),
+        // Host-only authoritative request list; empty for every other player.
+        rejoinRequests: z.array(z.object({
+          requestId: z.string().uuid(),
+          name: nameSchema
+        }).strict()).default([])
       }).strict()
     })
   }).strict(),
@@ -137,8 +144,8 @@ export const ViewSchema = z.discriminatedUnion('role', [
 export const ServerMsgSchema = z.discriminatedUnion('t', [
   z.object({ t: z.literal('view'), view: ViewSchema }).strict(),
   z.object({ t: z.literal('rejoinPending') }).strict(),
-  z.object({ t: z.literal('rejoinRequest'), requestId: z.string().uuid(), name: nameSchema }).strict(),
   z.object({ t: z.literal('rejoinResult'), accepted: z.boolean(), role: z.enum(['player', 'spectator']) }).strict(),
+  z.object({ t: z.literal('left') }).strict(),
   z.object({ t: z.literal('error'), code: z.string(), message: z.string() }).strict()
 ]);
 
@@ -151,7 +158,12 @@ export type PublicPlayer = z.infer<typeof PublicPlayerSchema>;
 export type PublicSpectator = z.infer<typeof PublicSpectatorSchema>;
 export type PublicView = z.infer<typeof PublicViewSchema>;
 export type PlayerView = PublicView & {
-  you: { id: string; hand: Card[]; concealedOwn: Record<string, TableCard> };
+  you: {
+    id: string;
+    hand: Card[];
+    concealedOwn: Record<string, TableCard>;
+    rejoinRequests: Array<{ requestId: string; name: string }>;
+  };
 };
 export type View =
   | { role: 'player'; data: PlayerView }

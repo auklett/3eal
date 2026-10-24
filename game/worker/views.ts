@@ -70,7 +70,14 @@ export function playerView(room: RoomState, playerId: string): View {
     role: 'player',
     data: {
       ...data,
-      you: { id: player.id, hand: player.hand, concealedOwn }
+      you: {
+        id: player.id,
+        hand: player.hand,
+        concealedOwn,
+        rejoinRequests: player.id === room.hostId
+          ? room.rejoinRequests.map((request) => ({ requestId: request.id, name: request.name }))
+          : []
+      }
     }
   };
 }

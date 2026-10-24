@@ -44,11 +44,9 @@ export interface SetExample {
   cards: UiCard[];
   /** Spoken description of the pattern. */
   ariaLabel: string;
-  /** The "nothing matches" counter-example gets a red cross instead of a mark. */
-  notASet?: boolean;
 }
 
-/** Section 2: one panel per valid pattern, plus one unambiguous non-set. */
+/** Section 2: one panel per valid pattern (four in total). */
 export const setExamples: SetExample[] = [
   {
     id: 'same-color',
@@ -88,17 +86,6 @@ export const setExamples: SetExample[] = [
       normal('set-wild-1', 'periwinkle', 4, 'circle'),
       normal('set-wild-2', 'rose', 4, 'triangle'),
       teal('set-wild-3')
-    ]
-  },
-  {
-    id: 'not-a-set',
-    trait: 'Nothing matches',
-    notASet: true,
-    ariaLabel: 'Not a set: three cards sharing no colour, number, or shape',
-    cards: [
-      normal('set-none-1', 'periwinkle', 1, 'circle'),
-      normal('set-none-2', 'rose', 3, 'triangle'),
-      normal('set-none-3', 'grape', 6, 'hexagon')
     ]
   }
 ];

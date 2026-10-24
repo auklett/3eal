@@ -27,8 +27,23 @@ type RoomPlayer = {
   away: boolean;
   awayAt: number | null; // When the away clock started, or null while present
   kicked: boolean;
+  left: boolean;         // True after Leave Lobby; purged by the next lobby reset
   table: { card: TableCard; revealed: boolean }[]; // NORMAL + TEAL only, max 9
   hand: Card[];          // Private authoritative hand; clients see only their own
+};
+
+type RoomSpectator = {
+  id: string;
+  sessionIds: string[];
+  name: string;
+  connected: boolean;
+  left: boolean;
+};
+
+type LastInterruptResult = {
+  kind: 'CONCEAL' | 'STEAL' | 'REVEAL';
+  outcome: 'appealed' | 'resolved' | 'expired';
+  resolvedAt: number;    // server timestamp used as the client notice key
 };
 ```
 
@@ -48,7 +63,7 @@ type RoomState = {
   phase: 'lobby' | 'playing' | 'finished';
   hostId: string;
   players: RoomPlayer[];
-  spectators: RoomSpectator[];             // no configured capacity limit; see rules.md
+  spectators: RoomSpectator[];             // no capacity limit; players are capped at start
   turnDurationSeconds: number;             // 15–180, default 60
   deck: Card[];                            // draw deck; discards are shuffled straight back in
   activePlayerId: string | null;
@@ -77,7 +92,13 @@ type PauseRemaining = {
 
 While `paused` is true every absolute deadline is cleared (so an alarm cannot fire) and each countdown's remaining time is stored in `pauseRemaining`. Resuming sets each deadline back to `now + remaining` and reschedules the room's single alarm to the earliest one.
 
+`MAX_STARTING_PLAYERS` is **10**, matching the ten copies of each Action card. A Start with more than ten players is rejected with `Up to 10 players can start a game. Move extras to Spectator.` The engine does not cap how many people may join a lobby; the cap applies only when the host starts.
+
+`lastInterruptResult` belongs to the turn in which the interrupt resolved. `beginTurn` and `finishTurn` clear it, so clients hide the transient result notice when the turn changes. `resolvedAt` is the server timestamp used to key that notice.
+
 Interrupt eligibility is deliberately **not** stored as a broadcastable list. Whether a player is a legal target is public; whether that player also holds an APPEAL card is private and is re-checked per socket from the authoritative hand, never serialized into a view.
+
+Rejoin requests remain authoritative server state in `rejoinRequests`. They are serialized only into the host's private player view as `you.rejoinRequests: Array<{ requestId, name }>`; every other player view and every spectator view receives an empty list. The host UI derives its notice strip from snapshots rather than a separate request message.
 
 ## 2. Deck Generation & Combinations
 
@@ -85,6 +106,10 @@ Interrupt eligibility is deliberately **not** stored as a broadcastable list. Wh
 - **Wild Deck:** **3 TEAL Cards** — fixed color, flexible number/shape
 - **Action Deck:** 10 copies × 4 types = **40 Action Cards**
 - **Total Deck Size:** **218 Cards**
+
+### Starting Deal
+
+Each player takes one CONCEAL, one STEAL, one REVEAL, and one APPEAL from the already-shuffled deck into Hand, in that fixed order. Each player then takes three Normal/TEAL cards from the same deck onto their Table, all revealed. The remaining deck is **not** reshuffled, so after setup it holds `218 − 7 × playerCount` cards and the first active player's draw makes their Hand five cards. The same seed reproduces the same deal.
 
 ### Normal Card Colors:
 - `C0C0FF` — Periwinkle
@@ -144,17 +169,26 @@ Interrupt eligibility is deliberately **not** stored as a broadcastable list. Wh
 ## 4. Game Flow & Turn Phases
 
 ### Phase Sequence:
-1. **DRAW** — At the start of each turn, the active player automatically draws 1 card from the deck. Discarded cards are shuffled straight back into that same deck, so the deck only runs out when every card is in play; if no card is available, none is drawn. Every card initially goes to Hand.
+1. **DRAW** — At the start of each turn, the active player automatically draws 1 card from the deck. Discarded cards are shuffled straight back into that same deck, so the deck only runs out when every card is in play; if no card is available, none is drawn. Starting Table cards are dealt directly to the Table; every later draw goes to Hand.
 2. **MAIN** — Player may, in any order, any number of times:
    - Move NORMAL/TEAL cards from Hand to an open Table slot; at 9 cards this swaps with a selected Table card and returns the replaced card to Hand.
    - Move any number of NORMAL/TEAL cards from their Table to Hand (they are shuffled back into the deck at turn end).
    - Play CONCEAL, STEAL, or REVEAL from their Hand — each triggers INTERRUPT.
    - Rearrange their own Table freely. Arrangement is purely local presentation order: it never contacts the server and is not synchronized to opponents.
 3. **INTERRUPT** — Eligible player(s) have 30 seconds to play APPEAL; if none do, the action resolves and phase returns to MAIN.
-4. **End Turn** — All unused Action cards remain in Hand; every other card left in Hand is shuffled straight back into the deck. If a STEAL left more than 9 cards on the Table, move cards into Hand until it is back to nine (Action cards are never moved this way). Then check for a win; the server records the valid partition it finds in `winningSets`, and the turn passes to the next player. The default turn timer is 60 seconds and the host may set it to 15–180 seconds in the lobby.
+4. **End Turn** — All unused Action cards remain in Hand; every other card left in Hand is shuffled straight back into the deck. If a STEAL left more than 9 cards on the Table, move cards into Hand until it is back to nine (Action cards are never moved this way). Then check for a win; the server records the valid partition it finds in `winningSets`, and the turn passes to the next player. `lastInterruptResult` is cleared when the turn ends or the next turn begins, so its transient notice never carries over. The default turn timer is 60 seconds and the host may set it to 15–180 seconds in the lobby.
 
 ### Pausing
 The host may pause and resume at any time while `phase === 'playing'`; pause controls are unavailable in the lobby and after the game ends. On pause the engine clears every absolute deadline, stores each remaining time in `pauseRemaining`, sets `paused = true`, and stops scheduling an alarm. While paused `reduceRoom` rejects every game intent with `Game is paused` (placing, moving, ending a turn, appealing, passing, targeting, role changes); host management (kick, approve/decline rejoin) is handled outside the pure game reducer and stays available. Players may still rearrange their own Table because that path never reaches the server. Resume recomputes each deadline and re-arms the room alarm. The game never auto-resumes, including when host ownership transfers; the new host receives the controls.
+
+### End of Game and Lobby Reset
+
+Two engine helpers sit outside `RoomIntent` because the Worker must supply a fresh random seed and may need to delete the room:
+
+- `returnToLobby(state, actorId, freshSeed)` requires `actorId === hostId` and `phase === 'finished'`. It clones the room, keeps the host plus every connected, non-away, non-left, non-kicked player, keeps every connected, non-left spectator, and drops everyone else. It clears the deck, Tables, Hands, turn state, pending action, pause state, winner, winning sets, rejoin requests, and interrupt result. It resets `randomSeed` to `freshSeed` and `randomCounter` to 0, keeps the room code and `turnDurationSeconds`, and returns the room directly to `lobby`. Dropped names and default `Player N` numbers become available again.
+- `leaveRoom(state, actorId)` is available in `lobby` and `finished`, never in `playing`. A non-winner is removed immediately. During `finished`, a winner is retained with `left: true`, `connected: false`, and no session IDs so the Game Over result stays renderable until the reset. The helper returns `{ result, removedId?, roomDeleted? }`; `roomDeleted` is true when no non-left, non-kicked members remain.
+
+Host succession runs for both disconnect transfer and explicit leaving. It selects the first remaining connected, non-left, non-kicked member in list order, with `players` considered before `spectators`. A left winner never inherits. The Worker closes the leaving member's sockets after sending `{ t: 'left' }`; when `roomDeleted` is true it deletes all storage and closes every remaining socket. On `returnToLobby`, sockets for dropped members are closed without `left`; if they reconnect, normal lobby join rules treat them as new members.
 
 ## 5. Win Condition Validation (Pattern Engine)
 
@@ -198,7 +232,7 @@ The Cloudflare Worker routes each room to its SQLite-backed `GameRoom` Durable O
 |------|---------|
 | `game/packages/engine/src/deck.ts` | Seeded deck generation and shuffling |
 | `game/packages/engine/src/sets.ts` | Set validation, maximum complete-set count, and the 9-card partition search |
-| `game/packages/engine/src/room.ts` | Pure room lifecycle, turn, timer, pause/resume, away, and rejoin reducers |
+| `game/packages/engine/src/room.ts` | Pure room lifecycle, turn, timer, pause/resume, away, rejoin, lobby reset, and leave reducers |
 | `game/packages/engine/src/interrupts.ts` | Appeal eligibility, automatic pass, and interrupt resolution |
 | `game/src/logic/tableLayout.ts` | Local-only Table layout merge/move helpers |
 | `game/src/logic/createRoom.ts` | Room-code validation, exists probe, and atomic create-with-code |
@@ -212,4 +246,8 @@ Every client/server message is Zod-validated in `src/shared/protocol.ts`.
 - **Pause / resume intents:** the host sends `{ t: 'pause' }` and `{ t: 'resume' }`. The server is authoritative about whether the host may pause; the resulting state arrives as a filtered `view` snapshot with `paused`, `pauseRemaining`, and null deadlines.
 - **Interrupt deadline:** the current interrupt's appeal deadline is the `endsAt` field (`number | null`). It is `null` while the game is paused, with the frozen remaining time in `pauseRemaining.interrupt`.
 - **`winningSets`:** the FINISHED snapshot carries `winningSets: string[][] | null` — the card IDs of the three validated sets (grouped 3×3) the engine found — so every client renders the same Game Over grouping.
+- **End-of-game intents:** `{ t: 'returnToLobby' }` is host-only and only valid while `phase === 'finished'`; the Worker generates the fresh seed. `{ t: 'leaveRoom' }` is available in the lobby and after the game ends. Both are Zod-validated before reaching the engine helpers.
+- **Leave confirmation:** after a successful `leaveRoom`, the Worker sends `{ t: 'left' }` to the leaving member and closes their socket. The client stops reconnecting and navigates home. The host's `returnToLobby` produces an ordinary lobby `view` snapshot; no `left` message is sent to the host.
+- **Transient interrupt result:** `lastInterruptResult` now includes `resolvedAt` (server milliseconds). Clients key the five-second result notice on `kind + outcome + resolvedAt` and remember it in `sessionStorage`, so the same snapshot does not re-show the notice after a reconnect or reload.
+- **Host-only rejoin requests:** only the host's player `view.data.you.rejoinRequests` contains pending request IDs and names; all other views get `[]`.
 - **Rejection error:** while `paused` is true the server rejects game intents (placing, moving, ending a turn, appealing, passing, targeting) and answers with the error message `Game is paused`.

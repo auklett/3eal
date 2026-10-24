@@ -41,6 +41,13 @@ export interface ViewOptions {
   winnerId?: string | null;
   winningSets?: string[][] | null;
   reveal?: boolean;
+  turnNumber?: number;
+  turnDurationSeconds?: number;
+  rejoinRequests?: Array<{ requestId: string; name: string }>;
+  lastInterruptResult?: { kind: 'CONCEAL' | 'STEAL' | 'REVEAL'; outcome: 'appealed' | 'resolved' | 'expired'; resolvedAt: number } | null;
+  awayIds?: string[];
+  spectators?: Array<{ id: string; name: string; connected: boolean }>;
+  extraPlayers?: number;
 }
 
 function concealed(cards: Card[]): PublicSlot[] {
@@ -53,33 +60,42 @@ export function playerView(options: ViewOptions = {}): View {
   const bobTable = options.bobTable ?? concealed(bobCards);
   const activePlayerId = options.activePlayerId === undefined ? BOB : options.activePlayerId;
   const reveal = options.reveal ?? phase === 'finished';
+  const extras = Array.from({ length: options.extraPlayers ?? 0 }, (_, index) => ({
+    id: `00000000-0000-4000-8000-${String(100 + index).padStart(12, '0')}`,
+    name: `Extra ${index + 1}`,
+    connected: true,
+    away: false,
+    table: []
+  }));
 
   const data: Record<string, unknown> = {
     roomCode: 'ABCD',
     phase,
     hostId: options.hostId ?? ALICE,
     players: [
-      { id: ALICE, name: 'Alice', connected: true, away: false, table: aliceTable },
-      { id: BOB, name: 'Bob', connected: true, away: false, table: bobTable }
+      { id: ALICE, name: 'Alice', connected: !options.awayIds?.includes(ALICE), away: options.awayIds?.includes(ALICE) ?? false, table: aliceTable },
+      { id: BOB, name: 'Bob', connected: !options.awayIds?.includes(BOB), away: options.awayIds?.includes(BOB) ?? false, table: bobTable },
+      ...extras
     ],
-    spectators: [],
-    spectatorCount: 0,
+    spectators: options.spectators ?? [],
+    spectatorCount: options.spectators?.length ?? 0,
     activePlayerId,
     turnEndsAt: phase === 'playing' && !options.paused ? Date.now() + 60_000 : null,
     turnRemainingMs: null,
-    turnDurationSeconds: 60,
-    turnNumber: 1,
+    turnDurationSeconds: options.turnDurationSeconds ?? 60,
+    turnNumber: options.turnNumber ?? 1,
     paused: options.paused ?? false,
     pauseRemaining: options.pauseRemaining ?? null,
     interrupt: options.interrupt ?? null,
-    lastInterruptResult: null,
+    lastInterruptResult: options.lastInterruptResult ?? null,
     deckCount: 200,
     winnerId: options.winnerId === undefined ? (phase === 'finished' ? ALICE : null) : options.winnerId,
     winningSets: options.winningSets ?? null,
     you: {
       id: ALICE,
       hand: options.aliceHand ?? [],
-      concealedOwn: Object.fromEntries(aliceCards.map((card) => [card.id, card]))
+      concealedOwn: Object.fromEntries(aliceCards.map((card) => [card.id, card])),
+      rejoinRequests: options.rejoinRequests ?? []
     }
   };
 
@@ -110,7 +126,7 @@ type MockSocket = { send: (message: string) => void; close: () => void };
 export async function mockRoomSocket(
   page: Page,
   roomCode: string,
-  view: View,
+  view: View | (() => View),
   sent: string[] = [],
   onJoin?: (webSocket: MockSocket) => void,
   onClientMessage?: (message: Record<string, unknown>, webSocket: MockSocket) => void
@@ -128,7 +144,7 @@ export async function mockRoomSocket(
       if (typeof parsed !== 'object' || parsed === null) return;
       const parsedMessage = parsed as Record<string, unknown>;
       if (parsedMessage['t'] === 'join') {
-        const response: ServerMsg = { t: 'view', view };
+        const response: ServerMsg = { t: 'view', view: typeof view === 'function' ? view() : view };
         webSocket.send(JSON.stringify(response));
         onJoin?.(webSocket);
         return;

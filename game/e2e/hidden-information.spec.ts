@@ -69,11 +69,11 @@ function makeViews(aliceConcealed: Set<string> = new Set()): { alice: View; bob:
   return {
     alice: {
       role: 'player',
-      data: { ...base, you: { id: aliceId, hand: [aliceHandCard], concealedOwn: concealedOwn(aliceStart, aliceConcealed) } }
+      data: { ...base, you: { id: aliceId, hand: [aliceHandCard], concealedOwn: concealedOwn(aliceStart, aliceConcealed), rejoinRequests: [] } }
     },
     bob: {
       role: 'player',
-      data: { ...base, you: { id: bobId, hand: [bobHandCard], concealedOwn: {} } }
+      data: { ...base, you: { id: bobId, hand: [bobHandCard], concealedOwn: {}, rejoinRequests: [] } }
     },
     spectator: { role: 'spectator', data: base }
   };
