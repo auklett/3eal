@@ -22,10 +22,10 @@ export default function MemberActionsMenu({ name, onMakeHost, onKick, className 
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
-  const close = (restoreFocus = true) => {
+  const close = () => {
     setOpen(false);
     setConfirm(null);
-    if (restoreFocus) window.requestAnimationFrame(() => triggerRef.current?.focus());
+    window.requestAnimationFrame(() => triggerRef.current?.focus());
   };
 
   useEffect(() => {
@@ -40,7 +40,7 @@ export default function MemberActionsMenu({ name, onMakeHost, onKick, className 
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node | null;
       if (menuRef.current?.contains(target) || triggerRef.current?.contains(target)) return;
-      close(false);
+      close();
     };
     document.addEventListener('pointerdown', onPointerDown, true);
     return () => document.removeEventListener('pointerdown', onPointerDown, true);
@@ -96,6 +96,12 @@ export default function MemberActionsMenu({ name, onMakeHost, onKick, className 
           ref={menuRef}
           role="menu"
           aria-label={`Actions for ${name}`}
+          onKeyDownCapture={(event) => {
+            if (event.key !== 'Escape') return;
+            event.preventDefault();
+            event.stopPropagation();
+            close();
+          }}
           onKeyDown={onMenuKeyDown}
           className="absolute right-0 z-30 mt-2 w-[150px] rounded-xl border border-white/20 bg-[#141414] p-1 shadow-2xl shadow-black/60"
         >

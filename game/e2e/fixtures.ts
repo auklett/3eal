@@ -125,7 +125,7 @@ export function spectatorView(options: ViewOptions = {}): View {
   const { you, ...publicData } = view.data;
   return {
     role: 'spectator',
-    data: { ...publicData, you: { id: you.id } }
+    data: { ...publicData, you: { id: you.id, interruptCard: null } }
   } as unknown as View;
 }
 
@@ -137,7 +137,10 @@ export async function mockConfig(page: Page): Promise<void> {
   }));
 }
 
-type MockSocket = { send: (message: string) => void; close: () => void };
+type MockSocket = {
+  send: (message: string) => void;
+  close: (options?: { code?: number; reason?: string }) => Promise<void>;
+};
 
 /** Serves a mocked game socket, replying to every `join` with the given view. */
 export async function mockRoomSocket(

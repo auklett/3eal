@@ -376,10 +376,10 @@ export default function WorkerLobbyPage({ roomCode, onStartGame, onLeave }: Work
               variant="ghost"
               icon={<RulesIcon />}
               aria-label="Rules"
-              className="min-w-11"
+              className="min-w-11 rounded-[10px] border border-white/25 bg-transparent px-3 text-[13px] font-normal text-white"
               onClick={() => setShowRules(true)}
             >
-              <span className="hidden min-[360px]:inline">Rules</span>
+              <span className="hidden sm:inline">Rules</span>
             </Button>
           </span>
         </header>

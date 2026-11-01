@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import {
   ALICE,
   BOB,
+  VIEWER,
   aliceCards,
   mockConfig,
   mockRoomSocket,
@@ -99,4 +100,54 @@ test('a spectator sees the waiting notice but no targeted card or prompt', async
   await expect(page.getByTestId('targeted-card')).toHaveCount(0);
   await expect(page.getByTestId('appeal-prompt')).toHaveCount(0);
   await expect(page.getByTestId('interrupt-waiting')).toBeVisible();
+});
+
+test('a blind STEAL card is visible only to its target across all viewer roles', async ({ browser }) => {
+  const thirdPlayer = '00000000-0000-4000-8000-000000000100';
+  const viewers = [
+    { id: ALICE, role: 'target' },
+    { id: BOB, role: 'actor' },
+    { id: thirdPlayer, role: 'uninvolved' },
+    { id: VIEWER, role: 'spectator' }
+  ] as const;
+
+  for (const viewer of viewers) {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await mockConfig(page);
+    const viewOptions = {
+      viewerId: viewer.id,
+      extraPlayers: viewer.role === 'uninvolved' ? 1 : 0,
+      activePlayerId: BOB,
+      interrupt: interrupt(),
+      aliceHand: viewer.role === 'target' ? [appeal] : [],
+      interruptCard: viewer.role === 'target'
+        ? { cardId: aliceCards[0].id, card: aliceCards[0], revealed: false }
+        : null
+    };
+    const view = viewer.role === 'spectator'
+      ? spectatorView(viewOptions)
+      : playerView(viewOptions);
+    await mockRoomSocket(page, 'ABCD', view);
+    await page.goto('/game/ABCD');
+
+    if (viewer.role === 'spectator') {
+      await expect(page.getByText('Spectating — you see the same public view as opponents.')).toBeVisible();
+    } else {
+      await waitForOwnTable(page, /Your Table/);
+    }
+
+    if (viewer.role === 'target') {
+      await expect(page.locator(`[data-table-owner="${ALICE}"][data-card-id="${aliceCards[0].id}"]`).getByTestId('targeted-card'))
+        .toHaveText('Targeted');
+      const appealPrompt = page.getByTestId('appeal-prompt');
+      await expect(appealPrompt).toBeVisible();
+      await expect(appealPrompt.getByLabel('Lavender 1 circle')).toBeVisible();
+    } else {
+      await expect(page.getByTestId('targeted-card')).toHaveCount(0);
+      await expect(page.getByTestId('appeal-prompt')).toHaveCount(0);
+      await expect(page.getByLabel('Lavender 1 circle')).toHaveCount(0);
+    }
+    await context.close();
+  }
 });

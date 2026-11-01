@@ -42,18 +42,54 @@ test('the active player gets an instant, non-modal Your turn popup with the spec
   expect(titleStyles.fontWeight).toBe('500');
   expect(titleStyles.lineHeight).toBe('34px');
 
+  const popupBehavior = await popup.evaluate((node) => ({
+    animation: getComputedStyle(node).animationName,
+    wrapperPointerEvents: getComputedStyle(node.parentElement!).pointerEvents,
+    panelPointerEvents: getComputedStyle(node).pointerEvents,
+    cards: Array.from(node.querySelectorAll('[aria-hidden="true"] span')).map((card) => {
+      const computed = getComputedStyle(card);
+      return { width: computed.width, height: computed.height, backgroundColor: computed.backgroundColor };
+    }),
+    ruleCount: node.querySelectorAll('hr').length,
+    paragraphCount: node.querySelectorAll('p').length
+  }));
+  expect(popupBehavior.animation).toBe('none');
+  expect(popupBehavior.wrapperPointerEvents).toBe('none');
+  expect(popupBehavior.panelPointerEvents).toBe('auto');
+  expect(popupBehavior.cards).toEqual([
+    { width: '24px', height: '34px', backgroundColor: 'rgb(192, 96, 96)' },
+    { width: '24px', height: '34px', backgroundColor: 'rgb(0, 128, 128)' },
+    { width: '24px', height: '34px', backgroundColor: 'rgb(192, 192, 255)' }
+  ]);
+  expect(popupBehavior.ruleCount).toBe(0);
+  expect(popupBehavior.paragraphCount).toBe(1);
+
   // It disappears instantly on Escape.
   await page.keyboard.press('Escape');
   await expect(popup).toHaveCount(0);
 });
 
+test('the X dismisses the popup immediately', async ({ page }) => {
+  await mockRoomSocket(page, 'ABCD', playerView({ activePlayerId: ALICE }));
+  await page.goto('/game/ABCD');
+  await waitForOwnTable(page, /Your Table/);
+
+  const popup = page.getByTestId('your-turn-popup');
+  await expect(popup).toBeVisible();
+  await popup.getByRole('button', { name: 'Dismiss' }).click();
+  await expect(popup).toHaveCount(0);
+});
+
 test('the popup auto-hides after five seconds and never re-shows in the same turn', async ({ page }) => {
+  await page.clock.install();
   await mockRoomSocket(page, 'ABCD', playerView({ activePlayerId: ALICE }));
   await page.goto('/game/ABCD');
   await waitForOwnTable(page, /Your Table/);
   await expect(page.getByTestId('your-turn-popup')).toBeVisible();
 
-  await page.waitForTimeout(5_200);
+  await page.clock.runFor(4_000);
+  await expect(page.getByTestId('your-turn-popup')).toBeVisible();
+  await page.clock.runFor(1_000);
   await expect(page.getByTestId('your-turn-popup')).toHaveCount(0);
 
   // A reload reconnects, but the same turn has already shown the popup.
@@ -70,6 +106,7 @@ test('only the active player sees the popup', async ({ page }) => {
 });
 
 test('a pause freezes the remaining time and an interrupt hides the popup for the turn', async ({ page }) => {
+  await page.clock.install();
   let current = playerView({ activePlayerId: ALICE });
   let pushView: (view: View) => void = () => {};
   await mockRoomSocket(page, 'ABCD', () => current, [], (socket) => {
@@ -78,6 +115,7 @@ test('a pause freezes the remaining time and an interrupt hides the popup for th
   await page.goto('/game/ABCD');
   await waitForOwnTable(page, /Your Table/);
   await expect(page.getByTestId('your-turn-popup')).toBeVisible();
+  await page.clock.runFor(1_000);
 
   current = playerView({
     activePlayerId: ALICE,
@@ -85,7 +123,15 @@ test('a pause freezes the remaining time and an interrupt hides the popup for th
     pauseRemaining: { turn: 20_000, interrupt: null }
   });
   pushView(current);
-  await page.waitForTimeout(5_200);
+  const pausedStatus = page.getByRole('region', { name: 'Turn status' }).getByText('Game paused by host');
+  await expect(pausedStatus).toBeVisible();
+  await page.clock.runFor(10_000);
+  await expect(page.getByTestId('your-turn-popup')).toBeVisible();
+
+  current = playerView({ activePlayerId: ALICE });
+  pushView(current);
+  await expect(pausedStatus).toHaveCount(0);
+  await page.clock.runFor(2_000);
   await expect(page.getByTestId('your-turn-popup')).toBeVisible();
 
   current = playerView({

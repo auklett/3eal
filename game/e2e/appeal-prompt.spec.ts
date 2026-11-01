@@ -61,6 +61,40 @@ test('the appeal prompt is an opaque single-row panel with one countdown', async
   expect(styles.paddingLeft).toBe('16px');
   expect(styles.maxWidth).toBe('600px');
 
+  const promptBox = await prompt.boundingBox();
+  const turnTextBox = await page.getByLabel('Turn status').locator('p[aria-live="polite"]').boundingBox();
+  expect(promptBox).not.toBeNull();
+  expect(turnTextBox).not.toBeNull();
+  const boxesOverlap = promptBox!.x < turnTextBox!.x + turnTextBox!.width &&
+    promptBox!.x + promptBox!.width > turnTextBox!.x &&
+    promptBox!.y < turnTextBox!.y + turnTextBox!.height &&
+    promptBox!.y + promptBox!.height > turnTextBox!.y;
+  expect(boxesOverlap).toBe(false);
+
+  const stackStyles = await page.getByTestId('notice-stack').evaluate((node) => {
+    const stack = getComputedStyle(node);
+    const topBar = getComputedStyle(document.querySelector('header')!);
+    return {
+      stackZIndex: stack.zIndex,
+      topBarZIndex: topBar.zIndex,
+      wrapperPointerEvents: stack.pointerEvents,
+      panelPointerEvents: getComputedStyle(node.querySelector('[data-testid="appeal-prompt"]')!).pointerEvents
+    };
+  });
+  expect(stackStyles.stackZIndex).toBe('30');
+  expect(stackStyles.topBarZIndex).toBe('40');
+  expect(stackStyles.wrapperPointerEvents).toBe('none');
+  expect(stackStyles.panelPointerEvents).toBe('auto');
+  await expect(prompt.getByRole('img', { name: /seconds remaining/ })).toHaveCount(1);
+  const promptButtons = await prompt.getByRole('button').evaluateAll((buttons) =>
+    buttons.map((button) => {
+      const { width, height } = button.getBoundingClientRect();
+      return { width, height };
+    })
+  );
+  expect(promptButtons).toHaveLength(2);
+  expect(promptButtons.every((box) => box.width >= 96 && box.height >= 44)).toBe(true);
+
   // The ring is the only appeal countdown: the turn banner no longer has one.
   await expect(page.getByTestId('appeal-timer')).toHaveCount(0);
   const banner = page.getByLabel('Turn status');
@@ -85,8 +119,19 @@ test('the waiting notice uses the same opaque panel, shows seconds, and reveals 
   await expect(waiting.getByRole('button')).toHaveCount(0);
   await expect(page.getByTestId('appeal-prompt')).toHaveCount(0);
 
-  const background = await waiting.evaluate((node) => getComputedStyle(node).backgroundColor);
-  expect(background).toBe('rgb(20, 20, 20)');
+  const waitingStyles = await waiting.evaluate((node) => {
+    const computed = getComputedStyle(node);
+    return {
+      background: computed.backgroundColor,
+      borderWidth: computed.borderTopWidth,
+      borderColor: computed.borderTopColor,
+      borderRadius: computed.borderTopLeftRadius
+    };
+  });
+  expect(waitingStyles.background).toBe('rgb(20, 20, 20)');
+  expect(waitingStyles.borderWidth).toBe('2px');
+  expect(waitingStyles.borderColor).toBe('rgb(255, 255, 255)');
+  expect(waitingStyles.borderRadius).toBe('16px');
 
   // It never names who was asked or who holds APPEAL.
   await expect(waiting).not.toContainText('Bob');

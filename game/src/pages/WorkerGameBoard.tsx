@@ -834,7 +834,7 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
       <NoticeStack>
         {showAppealSheet && interrupt && appealCard && (
           <div className="mx-auto w-full max-w-[600px] rounded-2xl border-2 border-white bg-[#141414] px-4 py-[14px] shadow-2xl shadow-black/60" data-testid="appeal-prompt">
-            <div className="flex items-center gap-3 sm:gap-4">
+            <div className="flex items-center gap-4">
               <div className="shrink-0 rounded-[12px] ring-[3px] ring-white">
                 {interruptCard ? (
                   <CardComponent
@@ -854,7 +854,7 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
               <div className="flex shrink-0 flex-col gap-2">
                 <Button
                   variant="primary"
-                  className="min-w-20 rounded-[12px] text-[15px] font-medium sm:min-w-24"
+                  className="min-w-24 rounded-[12px] text-[15px] font-medium"
                   disabled={data.paused}
                   onClick={() => send({ t: 'appeal', cardId: appealCard.id })}
                 >
@@ -862,7 +862,7 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
                 </Button>
                 <Button
                   variant="secondary"
-                  className="min-w-20 rounded-[12px] border-white/35 text-[15px] font-medium sm:min-w-24"
+                  className="min-w-24 rounded-[12px] border-white/35 text-[15px] font-medium"
                   disabled={data.paused}
                   onClick={() => send({ t: 'pass' })}
                 >

@@ -12,6 +12,8 @@ test('the lobby header opens the shared Rules overlay and restores focus on Esca
 
   const trigger = page.getByRole('button', { name: 'Rules' });
   await expect(trigger).toBeVisible();
+  await expect(trigger.getByText('Rules', { exact: true })).toBeVisible();
+  await expect(trigger).toHaveCSS('font-size', '13px');
   await trigger.click();
 
   const dialog = page.getByRole('dialog', { name: 'Game Rules' });
@@ -34,7 +36,7 @@ test('the lobby Rules control keeps a 44px target and falls back to its icon lab
   expect(box).not.toBeNull();
   expect(box!.height).toBeGreaterThanOrEqual(44);
   expect(box!.width).toBeGreaterThanOrEqual(44);
-  // The text label is hidden below 360px; the accessible name still says Rules.
+  // The text label is hidden below the desktop breakpoint; the accessible name still says Rules.
   await expect(trigger.getByText('Rules', { exact: true })).toBeHidden();
   await trigger.click();
   await expect(page.getByRole('dialog', { name: 'Game Rules' })).toBeVisible();
