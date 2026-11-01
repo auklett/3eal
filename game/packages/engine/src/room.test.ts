@@ -419,6 +419,19 @@ describe('room rules', () => {
     expect(room.hostId).toBe('host');
   });
 
+  it('transfers host after the game is finished without changing the result', () => {
+    const room = finishedRoom();
+    const nextHost = room.players.find((player) => player.id !== room.hostId);
+    if (!nextHost) throw new Error('Expected a second player');
+
+    const result = transferHostTo(room, room.hostId, nextHost.id);
+    if ('error' in result) throw new Error(result.error);
+    expect(result.state.hostId).toBe(nextHost.id);
+    expect(result.state.phase).toBe('finished');
+    expect(result.state.winnerId).toBe(room.winnerId);
+    expect(result.state.winningSets).toEqual(room.winningSets);
+  });
+
   it('transfers host while paused and leaves the pause and rejoin requests alone', () => {
     const room = startTwoPlayerRoom();
     const guest = room.players.find((player) => player.id !== room.hostId);

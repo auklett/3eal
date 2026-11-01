@@ -96,3 +96,48 @@ test('lobby member rows use the same Make host menu', async ({ page }) => {
   await menu.getByRole('menuitem', { name: 'Confirm' }).click();
   expect(sent.some((message) => message.includes('"t":"transferHost"'))).toBe(true);
 });
+
+test('member action menus support arrow navigation and restore focus after outside click', async ({ page }) => {
+  await mockRoomSocket(page, 'ABCD', playerView({
+    hostId: ALICE,
+    spectators: [{ id: VIEWER, name: 'Viewer', connected: true }]
+  }));
+  await page.goto('/game/ABCD');
+  await waitForOwnTable(page, /Your Table/);
+  await page.getByRole('button', { name: 'Players' }).click();
+
+  const trigger = page.getByRole('button', { name: 'Actions for Bob' });
+  await trigger.click();
+  const menu = page.getByRole('menu', { name: 'Actions for Bob' });
+  const makeHost = menu.getByRole('menuitem', { name: /Make host/ });
+  const kick = menu.getByRole('menuitem', { name: 'Kick' });
+  await expect(makeHost).toBeFocused();
+
+  await page.keyboard.press('ArrowDown');
+  await expect(kick).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(menu).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+
+  await trigger.click();
+  await page.mouse.click(10, 10);
+  await expect(menu).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+});
+
+test('Kick uses the same in-menu two-step confirmation', async ({ page }) => {
+  const sent: string[] = [];
+  await mockRoomSocket(page, 'ABCD', playerView({ hostId: ALICE }), sent);
+  await page.goto('/game/ABCD');
+  await waitForOwnTable(page, /Your Table/);
+  await page.getByRole('button', { name: 'Players' }).click();
+
+  const overlay = page.getByRole('dialog', { name: 'Players' });
+  const trigger = overlay.getByRole('button', { name: 'Actions for Bob' });
+  await trigger.click();
+  const menu = overlay.getByRole('menu', { name: 'Actions for Bob' });
+  await menu.getByRole('menuitem', { name: 'Kick' }).click();
+  await expect(menu.getByText('Kick Bob?')).toBeVisible();
+  await menu.getByRole('menuitem', { name: 'Confirm' }).click();
+  expect(sent.some((message) => message.includes('"t":"kick"') && message.includes(`"targetId":"${BOB}"`))).toBe(true);
+});
