@@ -44,8 +44,7 @@ test('the target sees a ring and a Targeted chip on their own concealed card', a
 
   // Its owner sees the face of their own concealed card.
   const card = slot.getByLabel('Lavender 1 circle');
-  const shadow = await card.evaluate((node) => getComputedStyle(node).boxShadow);
-  expect(shadow).toContain('4px');
+  await expect(card).toHaveCSS('box-shadow', /4px/);
   // The label is not the only signal: it overlaps the bottom edge of the card.
   const slotBox = await slot.boundingBox();
   const chipBox = await slot.getByTestId('targeted-card').boundingBox();
