@@ -248,6 +248,35 @@ describe('room rules', () => {
     });
   });
 
+  it('sends a legacy over-limit STEAL to Hand instead of growing the Table', () => {
+    const room = startTwoPlayerRoom();
+    room.turnEndsAt = null;
+    room.turnRemainingMs = 30_000;
+    const active = room.players.find((player) => player.id === room.activePlayerId);
+    const target = room.players.find((player) => player.id !== room.activePlayerId);
+    if (!active || !target) throw new Error('Expected two players');
+    fillTable(active, 10, true);
+    const stolen = target.table[0].card;
+    room.pendingAction = {
+      actionCard: { id: 'legacy-over-limit-steal', kind: 'action', action: 'STEAL' },
+      interrupt: {
+        id: 'legacy-over-limit-interrupt',
+        kind: 'STEAL',
+        actorId: active.id,
+        targetId: target.id,
+        targetCardId: stolen.id,
+        endsAt: 1000,
+        responderIds: [target.id],
+        passedIds: []
+      }
+    };
+
+    const result = processDeadlines(room, 1000);
+    const nextActive = result.state.players.find((player) => player.id === active.id);
+    expect(nextActive?.table).toHaveLength(10);
+    expect(nextActive?.hand.some((card) => card.id === stolen.id)).toBe(true);
+  });
+
   it('changes nothing when a steal is appealed', () => {
     const room = startTwoPlayerRoom();
     const active = room.players.find((player) => player.id === room.activePlayerId);
@@ -297,6 +326,33 @@ describe('room rules', () => {
         expect(active.table).toHaveLength(tableCount === 9 ? 9 : tableCount + 1);
       }
     ), { numRuns: 10 });
+  });
+
+  it('rejects ending a turn while any Table is over nine cards', () => {
+    const room = startTwoPlayerRoom();
+    const active = room.players.find((player) => player.id === room.activePlayerId);
+    if (!active) throw new Error('Expected an active player');
+    fillTable(active, 10, false);
+
+    const result = reduceRoom(room, active.id, { t: 'endTurn' }, 2000);
+
+    expect(result).toMatchObject({ error: 'A Table cannot hold more than 9 cards' });
+    expect(result.state.activePlayerId).toBe(active.id);
+    expect(result.state.players.find((player) => player.id === active.id)?.table).toHaveLength(10);
+  });
+
+  it('does not trim an oversized legacy Table during timer expiry', () => {
+    const room = startTwoPlayerRoom();
+    const active = room.players.find((player) => player.id === room.activePlayerId);
+    if (!active) throw new Error('Expected an active player');
+    fillTable(active, 10, false);
+    const tableBeforeExpiry = structuredClone(active.table);
+    room.turnEndsAt = 2000;
+
+    const expired = processDeadlines(room, 2000);
+
+    expect(expired.state.players.find((player) => player.id === active.id)?.table).toEqual(tableBeforeExpiry);
+    expect(expired.state.players.find((player) => player.id === active.id)?.table).toHaveLength(10);
   });
 
   it('rejects REVEAL without consuming the action card when no concealed card exists', () => {

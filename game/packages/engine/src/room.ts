@@ -297,12 +297,11 @@ function resolvePendingAction(
     } else {
       target.table.splice(targetSlotIndex, 1);
       if (actor.table.length >= 9) {
-        // A full Table receives the stolen card in Hand; it is a normal Hand
-        // card and enters concealed if it is placed later.
+        // A Hand card has no reveal state and is concealed if placed later.
         actor.hand.push(targetSlot.card);
         stolenToHand = true;
       } else {
-        // Keep the target's reveal state when the card moves to a Table.
+        // Below nine cards, keep the target's reveal state on the Table.
         actor.table.push(targetSlot);
       }
     }
@@ -853,6 +852,9 @@ export function reduceRoom(state: RoomState, actorId: string, intent: RoomIntent
 
   if (intent.t === 'endTurn') {
     if (!currentMainPlayer(state, actorId)) return { state, error: 'Only the active player can end their Main phase' };
+    if (next.players.some((player) => player.table.length > 9)) {
+      return { state, error: 'A Table cannot hold more than 9 cards' };
+    }
     finishTurn(next, now);
     return { state: next };
   }
