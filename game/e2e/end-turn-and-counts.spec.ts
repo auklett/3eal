@@ -49,17 +49,9 @@ test('a disabled End turn button stays grey instead of using the rose fill', asy
 
   const endTurn = page.getByRole('button', { name: 'End turn' });
   await expect(endTurn).toBeDisabled();
-  const styles = await endTurn.evaluate((node) => {
-    const computed = getComputedStyle(node);
-    return {
-      backgroundColor: computed.backgroundColor,
-      color: computed.color,
-      opacity: computed.opacity
-    };
-  });
-  expect(styles.backgroundColor).toMatch(/\/\s*0\.12\)/);
-  expect(styles.color).toMatch(/\/\s*0\.4\)/);
-  expect(styles.opacity).toBe('1');
+  await expect(endTurn).toHaveCSS('background-color', /\/\s*0\.12\)/);
+  await expect(endTurn).toHaveCSS('color', /\/\s*0\.4\)/);
+  await expect(endTurn).toHaveCSS('opacity', '1');
 });
 
 test('the STEAL actor sees a transient note when the stolen card went to their Hand', async ({ page }) => {
