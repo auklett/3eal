@@ -12,6 +12,7 @@
     "build": "tsc -b && vite build",
     "test": "vitest run --exclude='e2e/**'",
     "test:e2e": "playwright test",
+    "test:e2e:worker": "playwright test --config playwright.worker.config.ts",
     "simulate": "tsx simulator/cli.ts",
     "lint": "oxlint",
     "preview": "vite preview",

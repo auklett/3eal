@@ -98,6 +98,8 @@ While `paused` is true every absolute deadline is cleared (so an alarm cannot fi
 
 Interrupt eligibility is deliberately **not** stored as a broadcastable list. Whether a player is a legal target is public; whether that player also holds an APPEAL card is private and is re-checked per socket from the authoritative hand, never serialized into a view.
 
+During an interrupt, `you.interruptCard` contains the targeted card only for viewers allowed to see its identity: the target for STEAL/REVEAL, and every non-actor player for CONCEAL (the actor's own revealed card). The actor, uninvolved players, and spectators receive `null`. This private card view is independent of APPEAL eligibility; no responder or APPEAL-holder list is serialized.
+
 Rejoin requests remain authoritative server state in `rejoinRequests`. They are serialized only into the host's private player view as `you.rejoinRequests: Array<{ requestId, name }>`; every other player view and every spectator view receives an empty list. The host UI derives its notice strip from snapshots rather than a separate request message.
 
 ## 2. Deck Generation & Combinations
@@ -143,7 +145,8 @@ Each player takes one CONCEAL, one STEAL, one REVEAL, and one APPEAL from the al
 - **Target:** Any Normal or TEAL card on an opponent's Table.
   - If the target is Revealed, the acting player selects it directly.
   - If the target is Concealed, the acting player selects a slot blind — the server resolves which card it is; the result is known only to the acting player and the original owner until/unless it's Revealed later.
-- **Effect:** Moves the card from the opponent's Table to the acting player's Table, **preserving its Revealed/Concealed state**.
+- **Effect:** If the acting player's Table has fewer than 9 cards when STEAL resolves, the card moves to their Table and **preserves its Revealed/Concealed state**. If their Table has exactly 9 cards, the stolen card goes to their Hand instead. Cards in Hand have no reveal state; if later placed on the Table, the card enters concealed like any other Hand card.
+- A stolen card that goes to Hand follows normal end-turn cleanup: it returns to the deck unless it is swapped or placed on the Table before the turn ends.
 - **Restrictions:** Action cards can never be targeted (they live in Hand, not Table — structurally unreachable). Cards inside a completed set are **not** protected; nothing on the Table is safe from STEAL.
 - **Eligible to APPEAL:** Only the targeted player.
 - **Phase:** Played during MAIN phase, triggers INTERRUPT phase.
@@ -176,7 +179,7 @@ Each player takes one CONCEAL, one STEAL, one REVEAL, and one APPEAL from the al
    - Play CONCEAL, STEAL, or REVEAL from their Hand — each triggers INTERRUPT.
    - Rearrange their own Table freely. Arrangement is purely local presentation order: it never contacts the server and is not synchronized to opponents.
 3. **INTERRUPT** — Eligible player(s) have 30 seconds to play APPEAL; if none do, the action resolves and phase returns to MAIN.
-4. **End Turn** — All unused Action cards remain in Hand; every other card left in Hand is shuffled straight back into the deck. If a STEAL left more than 9 cards on the Table, move cards into Hand until it is back to nine (Action cards are never moved this way). Then check for a win; the server records the valid partition it finds in `winningSets`, and the turn passes to the next player. `lastInterruptResult` is cleared when the turn ends or the next turn begins, so its transient notice never carries over. The default turn timer is 60 seconds and the host may set it to 15–180 seconds in the lobby.
+4. **End Turn** — All unused Action cards remain in Hand; every other card left in Hand is shuffled straight back into the deck. Tables never exceed 9 cards; if a Table is ever over the limit, the server rejects an explicit End Turn with a clear error rather than moving cards during cleanup. Then check for a win; the server records the valid partition it finds in `winningSets`, and the turn passes to the next player. Timer expiry uses the same cleanup without trimming a Table. `lastInterruptResult` is cleared when the turn ends or the next turn begins, so its transient notice never carries over. The default turn timer is 60 seconds and the host may set it to 15–180 seconds in the lobby.
 
 ### Pausing
 The host may pause and resume at any time while `phase === 'playing'`; pause controls are unavailable in the lobby and after the game ends. On pause the engine clears every absolute deadline, stores each remaining time in `pauseRemaining`, sets `paused = true`, and stops scheduling an alarm. While paused `reduceRoom` rejects every game intent with `Game is paused` (placing, moving, ending a turn, appealing, passing, targeting, role changes); host management (kick, approve/decline rejoin) is handled outside the pure game reducer and stays available. Players may still rearrange their own Table because that path never reaches the server. Resume recomputes each deadline and re-arms the room alarm. The game never auto-resumes, including when host ownership transfers; the new host receives the controls.
@@ -234,17 +237,22 @@ The Cloudflare Worker routes each room to its SQLite-backed `GameRoom` Durable O
 | `game/packages/engine/src/sets.ts` | Set validation, maximum complete-set count, and the 9-card partition search |
 | `game/packages/engine/src/room.ts` | Pure room lifecycle, turn, timer, pause/resume, away, rejoin, lobby reset, and leave reducers |
 | `game/packages/engine/src/interrupts.ts` | Appeal eligibility, automatic pass, and interrupt resolution |
+| `game/src/shared/protocol.ts` | Zod-validated messages and public/private view schemas |
 | `game/src/logic/tableLayout.ts` | Local-only Table layout merge/move helpers |
 | `game/src/logic/createRoom.ts` | Room-code validation, exists probe, and atomic create-with-code |
 | `game/worker/gameRoom.ts` | Durable Object persistence, WebSocket views, alarms, and the internal exists check |
 | `game/worker/views.ts` | Player/spectator filtering of authoritative state |
+| `game/src/components/game/MemberActionsMenu.tsx` | Shared host-management menu used in the lobby and game views |
+| `game/src/components/game/YourTurnPopup.tsx` | Per-turn, private five-second active-player notice |
 
 ## 7. Protocol Notes
 
 Every client/server message is Zod-validated in `src/shared/protocol.ts`.
 
 - **Pause / resume intents:** the host sends `{ t: 'pause' }` and `{ t: 'resume' }`. The server is authoritative about whether the host may pause; the resulting state arrives as a filtered `view` snapshot with `paused`, `pauseRemaining`, and null deadlines.
+- **Host transfer:** `{ t: 'transferHost', playerId }` is a Zod-validated, host-only management message handled outside the pure game reducer. It is valid in every phase, including while paused or finished, and accepts another connected, non-left, non-kicked player or spectator. It changes only `hostId`: seats, phase, pause state, timers, and rejoin requests remain unchanged. The new host receives the private rejoin-request list and pause/resume controls; the previous host keeps their seat and role.
 - **Interrupt deadline:** the current interrupt's appeal deadline is the `endsAt` field (`number | null`). It is `null` while the game is paused, with the frozen remaining time in `pauseRemaining.interrupt`.
+- **Targeted-card view:** `you.interruptCard` is private and defaults to `null`. STEAL/REVEAL expose the card to its owner only; CONCEAL exposes the actor's public revealed card to non-actor players. Actors on blind targets, uninvolved players, and spectators receive `null`. No APPEAL-holder or responder list is included.
 - **`winningSets`:** the FINISHED snapshot carries `winningSets: string[][] | null` — the card IDs of the three validated sets (grouped 3×3) the engine found — so every client renders the same Game Over grouping.
 - **End-of-game intents:** `{ t: 'returnToLobby' }` is host-only and only valid while `phase === 'finished'`; the Worker generates the fresh seed. `{ t: 'leaveRoom' }` is available in the lobby and after the game ends. Both are Zod-validated before reaching the engine helpers.
 - **Leave confirmation:** after a successful `leaveRoom`, the Worker sends `{ t: 'left' }` to the leaving member and closes their socket. The client stops reconnecting and navigates home. The host's `returnToLobby` produces an ordinary lobby `view` snapshot; no `left` message is sent to the host.

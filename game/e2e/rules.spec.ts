@@ -23,10 +23,22 @@ async function openRulesInGame(page: Page): Promise<string> {
   return (await dialog.innerText()).trim();
 }
 
-test('Home and in-game open the same visual Rules overlay with the same content', async ({ page }) => {
+test('Home, lobby, and game open the same visual Rules overlay with the same content', async ({ page, browser }) => {
   const fromHome = await openRulesFromHome(page);
   const fromGame = await openRulesInGame(page);
   expect(fromGame).toBe(fromHome);
+
+  const lobbyContext = await browser.newContext();
+  const lobbyPage = await lobbyContext.newPage();
+  await mockConfig(lobbyPage);
+  await mockRoomSocket(lobbyPage, 'ABCD', playerView({ phase: 'lobby', activePlayerId: null }));
+  await lobbyPage.goto('/lobby/ABCD');
+  await expect(lobbyPage.getByRole('heading', { name: 'Players (2)' })).toBeVisible();
+  await lobbyPage.getByRole('button', { name: 'Rules' }).click();
+  const lobbyDialog = lobbyPage.getByRole('dialog', RULES);
+  await expect(lobbyDialog).toBeVisible();
+  expect((await lobbyDialog.innerText()).trim()).toBe(fromHome);
+  await lobbyContext.close();
 });
 
 test('the Rules overlay shows the visual sections, set examples, and corrected action-card rule', async ({ page }) => {

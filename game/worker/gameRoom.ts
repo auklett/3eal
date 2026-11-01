@@ -12,6 +12,7 @@ import {
   resolveRejoinRequest,
   returnToLobby,
   setParticipantConnected,
+  transferHostTo,
   type RoomIntent,
   type RoomState
 } from '@3eal/engine';
@@ -113,6 +114,7 @@ export class GameRoom extends DurableObject<Env> {
 
     if (message.t === 'rejoinDecision') return this.handleRejoinDecision(webSocket, message);
     if (message.t === 'kick') return this.handleKick(webSocket, attachment, message);
+    if (message.t === 'transferHost') return this.handleTransferHost(webSocket, attachment, message);
     if (message.t === 'changeName') return this.handleChangeName(webSocket, attachment, message);
     if (message.t === 'returnToLobby') return this.handleReturnToLobby(webSocket, attachment);
     if (message.t === 'leaveRoom') return this.handleLeaveRoom(webSocket, attachment);
@@ -281,6 +283,25 @@ export class GameRoom extends DurableObject<Env> {
     await this.commit();
   }
 
+  /**
+   * Host management runs outside the pure game reducer, like kick and rejoin
+   * approval, so it also works while the game is paused. A spectator host can
+   * transfer ownership too: the attachment's participant ID is authoritative.
+   */
+  private async handleTransferHost(
+    webSocket: WebSocket,
+    attachment: Attachment,
+    message: Extract<ClientMsg, { t: 'transferHost' }>
+  ): Promise<void> {
+    if (!this.room || !attachment.playerId) {
+      return this.sendError(webSocket, 'host_only', 'Only the host can transfer host');
+    }
+    const result = transferHostTo(this.room, attachment.playerId, message.playerId);
+    if ('error' in result) return this.sendError(webSocket, 'transfer_rejected', result.error);
+    this.room = result.state;
+    await this.commit();
+  }
+
   private async handleChangeName(
     webSocket: WebSocket,
     attachment: Attachment,
@@ -335,7 +356,7 @@ export class GameRoom extends DurableObject<Env> {
     // Send confirmation back to the client
     this.send(webSocket, { t: 'view', view: attachment.role === 'player'
       ? playerView(this.room, attachment.playerId)
-      : spectatorView(this.room) });
+      : spectatorView(this.room, attachment.playerId) });
   }
 
   private async handleReturnToLobby(webSocket: WebSocket, attachment: Attachment): Promise<void> {
@@ -343,6 +364,7 @@ export class GameRoom extends DurableObject<Env> {
     if (!attachment.playerId) return this.sendError(webSocket, 'not_in_room', 'You must be in the room to return to the lobby');
     // The Worker owns the fresh seed so the next game is a brand-new shuffle.
     const result = returnToLobby(this.room, attachment.playerId, crypto.randomUUID());
+    // Engine returns new lobby state with only connected, non-away, non-left, non-kicked members
     if ('error' in result) return this.sendError(webSocket, 'rejected', result.error);
     this.room = result.state;
     this.closeRemovedSockets();
@@ -390,7 +412,9 @@ export class GameRoom extends DurableObject<Env> {
         continue;
       }
       if (attachment.playerId && !remaining.has(attachment.playerId)) {
-        socket.close(4004, 'left');
+        // Dropped member: close with 4001 so the client rotates its session ID
+        // and rejoins as a new member under normal lobby join rules.
+        socket.close(4001, 'reconnected');
       }
     }
   }
@@ -399,14 +423,17 @@ export class GameRoom extends DurableObject<Env> {
     await this.ready;
     if (!this.room) return;
     const attachment = webSocket.deserializeAttachment() as Attachment;
-    if (!attachment.playerId) return;
+    const playerId = attachment.playerId;
+    if (!playerId) return;
+    // A page reload can close the old socket just before its replacement joins.
+    // Do not mark the member away while another tagged room socket owns the seat.
     const hasOtherConnection = this.ctx.getWebSockets('room').some((socket) => {
-      if (socket === webSocket) return false;
+      if (socket === webSocket || socket.readyState !== WebSocket.OPEN) return false;
       const other = socket.deserializeAttachment() as Attachment;
-      return other.playerId === attachment.playerId && (other.role === 'player' || other.role === 'spectator');
+      return other.playerId === playerId && (other.role === 'player' || other.role === 'spectator');
     });
     if (hasOtherConnection) return;
-    this.room = setParticipantConnected(this.room, attachment.playerId, false, Date.now());
+    this.room = setParticipantConnected(this.room, playerId, false, Date.now());
     await this.commit();
   }
 
@@ -449,6 +476,7 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   private send(webSocket: WebSocket, message: ServerMsg): void {
+    if (webSocket.readyState !== WebSocket.OPEN) return;
     webSocket.send(JSON.stringify(message));
   }
 
@@ -472,7 +500,7 @@ export class GameRoom extends DurableObject<Env> {
       const player = this.room.players.find((candidate) => candidate.id === attachment.playerId);
       const spectator = this.room.spectators.find((candidate) => candidate.id === attachment.playerId);
       if (attachment.role === 'player' && player && !player.left) this.send(webSocket, { t: 'view', view: playerView(this.room, player.id) });
-      else if (attachment.role === 'spectator' && spectator && !spectator.left) this.send(webSocket, { t: 'view', view: spectatorView(this.room) });
+      else if (attachment.role === 'spectator' && spectator && !spectator.left) this.send(webSocket, { t: 'view', view: spectatorView(this.room, spectator.id) });
     }
   }
 }

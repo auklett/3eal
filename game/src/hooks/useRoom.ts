@@ -8,6 +8,7 @@ import { roomExists } from '../logic/createRoom';
 
 type RoomCommand = Exclude<ClientMsg, { t: 'join' } | { t: 'rejoin' }>;
 type ConnectionStatus = 'connecting' | 'connected' | 'reconnecting' | 'awaitingApproval' | 'notFound' | 'closed';
+const MAX_RECONNECT_ATTEMPTS = 3;
 
 /** Copy shown while a server-bound action is in flight, and once it is accepted. */
 export type SendFeedback = { pending: string; confirmation: string };
@@ -117,8 +118,33 @@ export function useRoom(roomCode: string, options: UseRoomOptions) {
     let stopped = false;
     let retryTimer: number | undefined;
     let retryCount = 0;
-    const sessionId = getSessionId(roomCode);
-    const normalizedName = options.name.trim() || 'Player';
+    let sessionId = getSessionId(roomCode);
+    let joinName = options.name.trim() || 'Player';
+    let reconnectFailed = false;
+
+    // A second live tab copies sessionStorage, so both tabs can claim the same
+    // seat. The server closes the older socket with 4001; instead of stealing
+    // the seat back forever, that tab gets a fresh session and rejoins as a new
+    // member. This is what makes duplicate tabs (and displaced connections)
+    // settle instead of ping-ponging between "Connecting…" and "Reconnecting…".
+    const rotatedName = (base: string): string => {
+      const data = canonicalView.current?.data;
+      const taken = new Set(
+        [...(data?.players ?? []), ...(data?.spectators ?? [])].map((member) => member.name.trim().toLowerCase())
+      );
+      if (/^player \d+$/i.test(base.trim())) {
+        let number = 1;
+        while (taken.has(`player ${number}`)) number += 1;
+        return `Player ${number}`;
+      }
+      let suffix = 2;
+      while (true) {
+        const ending = ` (${suffix})`;
+        const candidate = `${base.slice(0, Math.max(1, 24 - ending.length)).trimEnd()}${ending}`;
+        if (!taken.has(candidate.toLowerCase())) return candidate;
+        suffix += 1;
+      }
+    };
 
     const connect = () => {
       if (stopped) return;
@@ -132,7 +158,7 @@ export function useRoom(roomCode: string, options: UseRoomOptions) {
         setError('');
         socket.send(JSON.stringify({
           t: 'join',
-          name: normalizedName,
+          name: joinName,
           role: options.role ?? 'player',
           sessionId
         }));
@@ -161,6 +187,7 @@ export function useRoom(roomCode: string, options: UseRoomOptions) {
         const message = parsed.data;
         if (message.t === 'view') {
           retryCount = 0;
+          reconnectFailed = false;
           canonicalView.current = message.view;
           setView(message.view);
           setStatus('connected');
@@ -187,12 +214,34 @@ export function useRoom(roomCode: string, options: UseRoomOptions) {
         }
       });
 
-      socket.addEventListener('close', () => {
+      socket.addEventListener('close', (event) => {
         if (socketRef.current === socket) socketRef.current = null;
         if (stopped || leftRef.current) return;
         setView(canonicalView.current);
+
+        // 4001 means another live connection claimed this session. Rotating the
+        // session turns the displaced tab into a new member instead of racing
+        // the other tab for the same seat forever.
+        if (event.code === 4001) {
+          sessionId = crypto.randomUUID();
+          sessionStorage.setItem(`3eal-session:${roomCode}`, sessionId);
+          joinName = rotatedName(joinName);
+          retryCount = 0;
+          reconnectFailed = false;
+          setError('');
+          setStatus('reconnecting');
+          retryTimer = window.setTimeout(connect, 150);
+          return;
+        }
+
         const scheduleRetry = () => {
           retryCount += 1;
+          if (retryCount > MAX_RECONNECT_ATTEMPTS) {
+            reconnectFailed = true;
+            setStatus('closed');
+            setError('Could not reconnect to this room. Return home and try again.');
+            return;
+          }
           const delay = Math.min(500 * (2 ** Math.min(retryCount - 1, 5)), 15_000);
           setStatus('reconnecting');
           retryTimer = window.setTimeout(connect, delay);
@@ -216,6 +265,7 @@ export function useRoom(roomCode: string, options: UseRoomOptions) {
             });
           return;
         }
+        if (reconnectFailed) return;
         scheduleRetry();
       });
 

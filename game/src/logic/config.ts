@@ -18,7 +18,6 @@ export const GAME_CONFIG = {
   defaultTurnDurationSeconds: 60,
   interruptDurationMs: 30_000,
   awayAfterMs: 60_000,
-  heartbeatIntervalMs: 15_000,
   maxConsecutiveMissedTurns: 3,
   pendingRejoinExpiryMs: 60_000
 } as const;

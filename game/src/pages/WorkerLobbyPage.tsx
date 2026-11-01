@@ -8,6 +8,9 @@ import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
 import ConnectionDot from '../components/ui/ConnectionDot';
 import SpinnerDots from '../components/ui/SpinnerDots';
+import RulesOverlay from '../components/game/RulesOverlay';
+import MemberActionsMenu from '../components/game/MemberActionsMenu';
+import { RulesIcon } from '../components/icons/IconSprite';
 import { requestRoomCreation } from '../logic/createRoom';
 import type { PublicPlayer, PublicSpectator, View } from '../shared/protocol';
 
@@ -51,12 +54,12 @@ export default function WorkerLobbyPage({ roomCode, onStartGame, onLeave }: Work
   const [isEditingName, setIsEditingName] = useState(false);
   const [isChangingName, setIsChangingName] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [confirmKickId, setConfirmKickId] = useState<string | null>(null);
   const [turnstileSiteKey, setTurnstileSiteKey] = useState('');
   const [turnstileToken, setTurnstileToken] = useState('');
   const [turnstileResetKey, setTurnstileResetKey] = useState(0);
   const [isCreatingLobby, setIsCreatingLobby] = useState(false);
   const [createLobbyError, setCreateLobbyError] = useState('');
+  const [showRules, setShowRules] = useState(false);
   const pendingName = useRef<string | null>(null);
   const copyTimer = useRef<number | undefined>(undefined);
   const awaitingTimer = useRef(false);
@@ -65,7 +68,7 @@ export default function WorkerLobbyPage({ roomCode, onStartGame, onLeave }: Work
 
   const data = viewData(view);
   const authoritativeTurnSeconds = data?.turnDurationSeconds;
-  const currentId = view?.role === 'player' ? view.data.you.id : sessionStorage.getItem(`3eal-session:${roomCode}`);
+  const currentId = view?.data.you.id;
   const isHost = Boolean(data && currentId && data.hostId === currentId);
   const isLobby = data?.phase === 'lobby';
   const players = useMemo(() => data?.players ?? [], [data]);
@@ -325,14 +328,11 @@ export default function WorkerLobbyPage({ roomCode, onStartGame, onLeave }: Work
           {away && <Badge tone="warn">Away</Badge>}
         </span>
         {isHost && !isYou && (
-          confirmKickId === member.id ? (
-            <span className="flex shrink-0 items-center gap-1">
-              <Button size="sm" variant="danger" onClick={() => { setConfirmKickId(null); send({ t: 'kick', targetId: member.id }); }}>Kick</Button>
-              <Button size="sm" variant="ghost" onClick={() => setConfirmKickId(null)}>Cancel</Button>
-            </span>
-          ) : (
-            <Button size="sm" variant="ghost" onClick={() => setConfirmKickId(member.id)}>Kick</Button>
-          )
+          <MemberActionsMenu
+            name={member.name}
+            onMakeHost={() => send({ t: 'transferHost', playerId: member.id })}
+            onKick={() => send({ t: 'kick', targetId: member.id })}
+          />
         )}
       </>
     );
@@ -369,7 +369,19 @@ export default function WorkerLobbyPage({ roomCode, onStartGame, onLeave }: Work
             <ConnectionDot connected={connected} />
             {!connected && <span className="text-xs text-amber-200">Reconnecting…</span>}
           </div>
-          <span className="text-xs text-muted">Lobby</span>
+          <span className="flex items-center gap-1.5">
+            <span className="text-xs text-muted">Lobby</span>
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={<RulesIcon />}
+              aria-label="Rules"
+              className="min-w-11 rounded-[10px] border border-white/25 bg-transparent px-3 text-[13px] font-normal text-white"
+              onClick={() => setShowRules(true)}
+            >
+              <span className="hidden sm:inline">Rules</span>
+            </Button>
+          </span>
         </header>
 
         {validationError && <p className="mb-4 text-sm text-rose-300" role="alert">{validationError}</p>}
@@ -612,6 +624,8 @@ export default function WorkerLobbyPage({ roomCode, onStartGame, onLeave }: Work
           </Button>
         </div>
       </div>
+
+      {showRules && <RulesOverlay onClose={() => setShowRules(false)} />}
     </main>
   );
 }

@@ -24,7 +24,10 @@
       "Bash(pkill -f \"wrangler\")",
       "Bash(npx vitest *)",
       "Bash(node *)",
-      "Bash(npx ts-node *)"
+      "Bash(npx ts-node *)",
+      "Bash(rtk ls *)",
+      "Bash(rtk git *)",
+      "Bash(rtk playwright *)"
     ]
   }
 }

@@ -29,6 +29,9 @@ export const ClientMsgSchema = z.discriminatedUnion('t', [
   z.object({ t: z.literal('rejoin'), name: nameSchema, sessionId: playerIdSchema }).strict(),
   z.object({ t: z.literal('rejoinDecision'), requestId: z.string().uuid(), accept: z.boolean() }).strict(),
   z.object({ t: z.literal('kick'), targetId: playerIdSchema }).strict(),
+  // Host management, valid in every phase (including paused) and outside the
+  // pure game reducer. The target may be a player or a spectator.
+  z.object({ t: z.literal('transferHost'), playerId: playerIdSchema }).strict(),
   z.object({ t: z.literal('returnToLobby') }).strict(),
   z.object({ t: z.literal('leaveRoom') }).strict(),
   z.object({ t: z.literal('changeName'), name: nameSchema }).strict()
@@ -92,6 +95,12 @@ const LastInterruptResultSchema = z.object({
   resolvedAt: z.number().int()
 }).strict();
 
+const PrivateInterruptCardSchema = z.object({
+  cardId: cardIdSchema,
+  card: TableCardSchema,
+  revealed: z.boolean()
+}).strict();
+
 const PauseRemainingSchema = z.object({
   turn: z.number().int().nonnegative().nullable(),
   interrupt: z.number().int().nonnegative().nullable()
@@ -130,6 +139,10 @@ export const ViewSchema = z.discriminatedUnion('role', [
         id: playerIdSchema,
         hand: z.array(CardSchema),
         concealedOwn: z.record(z.string(), TableCardSchema),
+        // Private: the card this viewer is allowed to see during an interrupt.
+        interruptCard: PrivateInterruptCardSchema.nullable().default(null),
+        // Private: resolution timestamp when this player's STEAL went to Hand.
+        stolenToHandAt: z.number().int().nullable().default(null),
         // Host-only authoritative request list; empty for every other player.
         rejoinRequests: z.array(z.object({
           requestId: z.string().uuid(),
@@ -138,7 +151,17 @@ export const ViewSchema = z.discriminatedUnion('role', [
       }).strict()
     })
   }).strict(),
-  z.object({ role: z.literal('spectator'), data: PublicViewSchema }).strict()
+  z.object({
+    role: z.literal('spectator'),
+    data: PublicViewSchema.extend({
+      // Spectators can be appointed host, so they need their own participant ID.
+      you: z.object({
+        id: playerIdSchema,
+        // Spectators never receive private targeted-card information.
+        interruptCard: z.null().default(null)
+      }).strict()
+    }).strict()
+  }).strict()
 ]);
 
 export const ServerMsgSchema = z.discriminatedUnion('t', [
@@ -162,10 +185,12 @@ export type PlayerView = PublicView & {
     id: string;
     hand: Card[];
     concealedOwn: Record<string, TableCard>;
+    interruptCard: { cardId: string; card: TableCard; revealed: boolean } | null;
+    stolenToHandAt: number | null;
     rejoinRequests: Array<{ requestId: string; name: string }>;
   };
 };
 export type View =
   | { role: 'player'; data: PlayerView }
-  | { role: 'spectator'; data: PublicView };
+  | { role: 'spectator'; data: PublicView & { you: { id: string; interruptCard: null } } };
 export type { Card, InterruptAction };

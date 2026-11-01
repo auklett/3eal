@@ -20,8 +20,8 @@ TEAL is a distinct wild card, not an ordinary Teal-colored Normal card. For a Sa
 
 ## Zones and visibility
 
-- **Table:** Holds Normal and TEAL cards. Cards are either revealed (visible to everyone) or concealed (identity visible only to their owner). The three starting Table cards are dealt revealed, so everyone can see them; CONCEAL can hide one later. A STEAL may temporarily take a table above nine cards until end-of-turn cleanup.
-- **Hand:** Private and unbounded. Every player starts with one each of CONCEAL, STEAL, REVEAL, and APPEAL in Hand. All unused Action cards remain in Hand across turns until played; all other cards left at turn end are shuffled straight back into the deck. No card in a Hand can be targeted.
+- **Table:** Holds at most nine Normal and TEAL cards. Cards are either revealed (visible to everyone) or concealed (identity visible only to their owner). The three starting Table cards are dealt revealed, so everyone can see them; CONCEAL can hide one later.
+- **Hand:** Private and unbounded. Every player starts with one each of CONCEAL, STEAL, REVEAL, and APPEAL in Hand. All unused Action cards remain in Hand across turns until played; all other cards left at turn end are shuffled straight back into the deck. A STEAL that resolves while the actor already has nine Table cards puts the stolen card in their Hand, where it has no reveal state. No card in a Hand can be targeted.
 - Public views never include another player's hand size or contents. A player's own view includes their own Hand; opponents and spectators see only their Table. Players see their own concealed cards. Spectators receive exactly the same public information as an opponent, with no private-card privileges.
 - Card IDs are random and must not encode card identity. Stealing preserves the card's reveal/conceal state; the thief can see it in their own private view.
 
@@ -66,12 +66,13 @@ Playing CONCEAL, STEAL, or REVEAL opens an interrupt with a maximum duration of 
 - APPEAL cancels the pending action; both action cards are shuffled straight back into the deck. APPEAL cannot itself be appealed.
 - Fast passing may reveal whether someone holds APPEAL; the game intentionally adds no random or fixed wait to hide that information.
 - REVEAL with no concealed cards on the target's Table is rejected and does not consume its action card. Because every Table starts revealed, REVEAL has no legal target until a card is concealed.
+- During an open interrupt, the targeted player sees which Table card is targeted, even if they do not hold APPEAL. For a blind STEAL/REVEAL this identity is private to the card's owner; for CONCEAL the actor's own revealed target is shown to the other players. The actor on a blind target, uninvolved players, and spectators do not receive the card identity, and no APPEAL-holder list is revealed.
 
-CONCEAL targets one of the actor's own revealed Table cards. STEAL takes a Normal/TEAL card from an opponent's Table, selected directly if revealed and blindly if concealed. REVEAL selects a concealed card on an opponent's Table blindly and makes it revealed when resolved. A stolen card keeps its revealed/concealed state on the new owner's Table.
+CONCEAL targets one of the actor's own revealed Table cards. STEAL takes a Normal/TEAL card from an opponent's Table, selected directly if revealed and blindly if concealed. If the actor has fewer than nine cards when STEAL resolves, the stolen card moves to their Table and keeps its revealed/concealed state; at nine cards, it goes to their Hand. A card placed from Hand later enters concealed. REVEAL selects a concealed card on an opponent's Table blindly and makes it revealed when resolved.
 
 ### End
 
-Keep any unused Action cards in your Hand for future turns and shuffle every other card left there back into the deck. If a STEAL left your Table above nine cards, move cards to your Hand until it is back to nine; those cards are shuffled into the deck in cleanup unless they are Action cards. Then check whether the nine cards form three valid sets. If so, the player wins and all cards are revealed to everyone. Otherwise, the turn passes to the next player.
+Keep any unused Action cards in your Hand for future turns and shuffle every other card left there back into the deck. Tables never exceed nine cards; if the server encounters an over-limit Table, an explicit End Turn is rejected rather than trimming the Table during cleanup. Then check whether nine Table cards form three valid sets. If so, the player wins and all cards are revealed to everyone. Otherwise, the turn passes to the next player.
 
 ### Pausing the game
 
@@ -92,7 +93,7 @@ A new session may request to rejoin by entering a player's name. The host approv
 
 Player seats, names, Tables, and action cards are held through disconnect until the game ends. After 60 seconds away, mark the player away and skip their current turn; future turns for that player are skipped immediately. A seat is never forfeited — it is held until the game ends. If the host disconnects, host ownership transfers to the first remaining connected, non-left, non-kicked member in list order, with players considered before spectators. The original host must request rejoin and be approved like any other returning player.
 
-The host can kick players and spectators.
+The host can kick players and spectators, or transfer host ownership to another connected, non-left, non-kicked player or spectator. A transfer is allowed in the lobby, during play, while paused, and after the game ends. The old host keeps their seat and role; the game, pause state, timers, and pending rejoin requests are unchanged. The new host receives host controls and any pending rejoin requests.
 
 ## After the game
 

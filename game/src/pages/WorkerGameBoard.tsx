@@ -17,6 +17,8 @@ import ConnectionDot from '../components/ui/ConnectionDot';
 import SpinnerDots from '../components/ui/SpinnerDots';
 import RulesOverlay from '../components/game/RulesOverlay';
 import NoticeStack from '../components/game/NoticeStack';
+import MemberActionsMenu from '../components/game/MemberActionsMenu';
+import YourTurnPopup from '../components/game/YourTurnPopup';
 import { CloseIcon } from '../components/icons/IconSprite';
 
 interface WorkerGameBoardProps {
@@ -87,10 +89,8 @@ function revealCardMap(view: View): Map<string, EngineCard> {
   return map;
 }
 
-function activeId(view: View, roomCode: string): string {
-  return view.role === 'player'
-    ? view.data.you.id
-    : sessionStorage.getItem(`3eal-session:${roomCode}`) ?? '';
+function activeId(view: View): string {
+  return view.data.you.id;
 }
 
 function tableSlotSize(size: CardSize): string {
@@ -105,20 +105,20 @@ function emptySlotSize(size: CardSize): string {
   return 'h-28 w-20';
 }
 
-/** A 30-second countdown ring for the appeal window (mono seconds in the middle). */
+/** A 56px, 30-second countdown ring (JetBrains Mono seconds in the middle). */
 function AppealRing({ seconds, paused }: { seconds: number | null; paused: boolean }) {
   const total = 30;
   const value = seconds === null ? total : Math.max(0, Math.min(total, seconds));
-  const radius = 26;
+  const radius = 24;
   const circumference = 2 * Math.PI * radius;
   const offset = circumference * (1 - value / total);
   return (
-    <span className="relative inline-flex h-16 w-16 items-center justify-center" role="img" aria-label={`${value} seconds remaining`}>
-      <svg viewBox="0 0 64 64" className="h-16 w-16 -rotate-90">
-        <circle cx="32" cy="32" r={radius} fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth="4" />
+    <span className="relative inline-flex h-14 w-14 items-center justify-center" role="img" aria-label={`${value} seconds remaining`}>
+      <svg viewBox="0 0 56 56" className="h-14 w-14 -rotate-90">
+        <circle cx="28" cy="28" r={radius} fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth="4" />
         <circle
-          cx="32"
-          cy="32"
+          cx="28"
+          cy="28"
           r={radius}
           fill="none"
           stroke="#ffffff"
@@ -129,7 +129,7 @@ function AppealRing({ seconds, paused }: { seconds: number | null; paused: boole
           style={{ transition: paused ? 'none' : 'stroke-dashoffset 250ms linear' }}
         />
       </svg>
-      <span className="absolute font-mono text-sm tabular-nums">{value}</span>
+      <span className="absolute font-mono text-base tabular-nums">{value}</span>
     </span>
   );
 }
@@ -194,6 +194,7 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
   const resultSeenKey = useRef<string | null>(null);
   const resultTurn = useRef<number | null>(null);
   const rejoinCount = useRef(0);
+  const previousHostId = useRef<string | null>(null);
 
   const closePlayers = useMemo(() => () => setShowPlayers(false), []);
   const closeOpponent = useMemo(() => () => setSelectedOpponentId(null), []);
@@ -225,7 +226,7 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
   // Keep the roster overlay host-only even if ownership transfers mid-session.
   useEffect(() => {
     if (!view) return;
-    if (activeId(view, roomCode) !== view.data.hostId) setShowPlayers(false);
+    if (activeId(view) !== view.data.hostId) setShowPlayers(false);
   }, [view, roomCode]);
 
   const finishedWinnerName = view?.data.winnerId
@@ -235,8 +236,15 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
   const resultKey = lastResult
     ? `${lastResult.kind}|${lastResult.outcome}|${lastResult.resolvedAt}`
     : null;
+  const stolenWentToHand = Boolean(
+    view?.role === 'player' &&
+    lastResult &&
+    view.data.you.stolenToHandAt === lastResult.resolvedAt
+  );
   const resultText = lastResult
-    ? `${lastResult.kind} ${lastResult.outcome === 'appealed' ? 'was appealed' : lastResult.outcome === 'expired' ? 'expired' : 'resolved'}.`
+    ? stolenWentToHand
+      ? 'The stolen card went to your Hand.'
+      : `${lastResult.kind} ${lastResult.outcome === 'appealed' ? 'was appealed' : lastResult.outcome === 'expired' ? 'expired' : 'resolved'}.`
     : null;
 
   // Game Over moves to the top of the board when the phase flips. Scroll there,
@@ -294,6 +302,22 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
     rejoinCount.current = count;
   }, [visibleRejoinRequests.length]);
 
+  // Host transfers are host management, not a game intent: every viewer hears
+  // who owns the room now, and the old host's Players overlay closes above.
+  useEffect(() => {
+    if (!view) return;
+    const hostId = view.data.hostId;
+    if (previousHostId.current === null) {
+      previousHostId.current = hostId;
+      return;
+    }
+    if (previousHostId.current === hostId) return;
+    previousHostId.current = hostId;
+    const host = view.data.players.find((player) => player.id === hostId)
+      ?? view.data.spectators.find((spectator) => spectator.id === hostId);
+    setAnnouncement(`${host?.name ?? 'A player'} is now the host.`);
+  }, [view]);
+
   // Keep the in-flight move's button mounted but disabled until the server
   // answers, so a second click cannot send a duplicate.
   useEffect(() => {
@@ -305,7 +329,7 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
   useEffect(() => {
     const data = view?.data;
     if (!data) return;
-    const selfIdForAnnounce = view ? activeId(view, roomCode) : '';
+    const selfIdForAnnounce = view ? activeId(view) : '';
     const myTurn = data.phase === 'playing' && data.activePlayerId === selfIdForAnnounce;
     const intr = data.interrupt;
     const key = `${data.phase}|${data.activePlayerId ?? ''}|${data.paused}|${intr?.id ?? ''}`;
@@ -347,7 +371,7 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
   }
 
   const data = view.data;
-  const selfId = activeId(view, roomCode);
+  const selfId = activeId(view);
   const self = data.players.find((player) => player.id === selfId);
   const ownView = view.role === 'player' ? view.data : null;
   const hand = ownView?.you.hand ?? [];
@@ -374,6 +398,22 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
       : self.id === interrupt.targetId
   ));
   const appealCard = hand.find((card) => card.kind === 'action' && card.action === 'APPEAL');
+  const interruptCard = view.role === 'player' ? view.data.you.interruptCard : null;
+  // The owner of the targeted card always sees the highlight, including a
+  // CONCEAL actor whose own card is the target and a target without APPEAL.
+  const targetedCardId = interrupt && self && interrupt.targetId === self.id
+    ? interrupt.targetCardId
+    : null;
+  const interruptActorName = interrupt
+    ? data.players.find((player) => player.id === interrupt.actorId)?.name ?? 'A player'
+    : '';
+  const interruptBody = interrupt
+    ? interrupt.kind === 'STEAL'
+      ? `${interruptActorName} wants to STEAL this card from you.`
+      : interrupt.kind === 'REVEAL'
+        ? `${interruptActorName} wants to REVEAL this card.`
+        : `${interruptActorName} wants to CONCEAL this card.`
+    : '';
 
   // Local, presentation-only Table order. Merged from every snapshot keyed by
   // card ID so it is never reset by an incoming server update.
@@ -638,6 +678,7 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
           const face = slot ? publicCard(slot, privateCards) : undefined;
           const cardId = isOwn ? slotId : (slot ? (slot.state === 'revealed' ? slot.card.id : slot.cardId) : null);
           const isOwnSelected = isOwn && tableSelection === index;
+          const isTargeted = isOwn && Boolean(cardId && cardId === targetedCardId);
           const isDropTarget = isOwn && dragOver?.kind === 'table' && dragOver.slot === index;
           const isDraggingSource = isOwn && drag?.from === 'table' && drag.originSlot === index;
           const canTarget = Boolean(targetForAction && slot && (
@@ -651,7 +692,7 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
           const selectable = canTarget || rearrangeReady;
           const disabled = !isPlayer;
           const baseLabel = face
-            ? `${table?.name ?? 'Player'} Table card${slot?.state === 'revealed' ? ', revealed' : ', concealed'}`
+            ? `${table?.name ?? 'Player'} Table card${slot?.state === 'revealed' ? ', revealed' : ', concealed'}${isTargeted ? ', targeted' : ''}`
             : 'Empty Table slot';
           return slot ? (
             <button
@@ -664,7 +705,7 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
               aria-label={baseLabel}
               onClick={() => handleSlotClick(playerId, index, slot)}
               onPointerDown={rearrangeReady ? (event) => beginPointer(event, cardId ?? '', 'table', index) : undefined}
-              className={`${tableSlotSize(size)} touch-none rounded-[var(--radius-control)] transition ${canTarget ? 'ring-2 ring-amber-300' : ''} ${isDropTarget ? 'ring-2 ring-teal-300' : ''} ${isDraggingSource ? 'opacity-40' : ''}`}
+              className={`relative ${tableSlotSize(size)} touch-none rounded-[var(--radius-control)] transition ${canTarget ? 'ring-2 ring-amber-300' : ''} ${isDropTarget ? 'ring-2 ring-teal-300' : ''} ${isDraggingSource ? 'opacity-40' : ''}`}
             >
               <CardComponent
                 card={face ?? {
@@ -677,10 +718,18 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
                 }}
                 size={size}
                 faceDown={!face}
-                isSelected={isOwnSelected}
+                isSelected={isOwnSelected || isTargeted}
                 isSelectable={selectable}
                 showRevealBadge={data.phase !== 'finished'}
               />
+              {isTargeted && (
+                <span
+                  data-testid="targeted-card"
+                  className="absolute -bottom-2 left-1/2 z-20 -translate-x-1/2 whitespace-nowrap rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold leading-none text-black shadow-md"
+                >
+                  Targeted
+                </span>
+              )}
             </button>
           ) : (
             <button
@@ -773,28 +822,39 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
         </div>
       </header>
 
+      <YourTurnPopup
+        roomCode={roomCode}
+        playerId={selfId}
+        turnNumber={data.turnNumber}
+        isMyTurn={isMyTurn}
+        paused={data.paused}
+        interruptOpen={Boolean(interrupt)}
+      />
+
       <NoticeStack>
         {showAppealSheet && interrupt && appealCard && (
-          <Panel padding="compact" className="bg-black/95 shadow-2xl">
-            <div className="flex items-center gap-3">
-              <div className="shrink-0">
-                <CardComponent card={toUiCard(appealCard)} size="xs" showRevealBadge={false} />
+          <div className="mx-auto w-full max-w-[600px] rounded-2xl border-2 border-white bg-[#141414] px-4 py-[14px] shadow-2xl shadow-black/60" data-testid="appeal-prompt">
+            <div className="flex items-center gap-4">
+              <div className="shrink-0 rounded-[12px] ring-[3px] ring-white">
+                {interruptCard ? (
+                  <CardComponent
+                    card={toUiCard(interruptCard.card, interruptCard.revealed)}
+                    size="sm"
+                    showRevealBadge={interruptCard.revealed}
+                  />
+                ) : (
+                  <CardComponent card={toUiCard(appealCard)} size="sm" showRevealBadge={false} />
+                )}
               </div>
               <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold">Play APPEAL?</p>
-                <p className="mt-0.5 text-xs text-white/60">
-                  {interrupt.kind} · APPEAL cancels it. {data.paused ? 'Paused — frozen.' : '30 seconds max.'}
-                </p>
-                <div className="mt-1 flex items-center gap-2">
-                  <AppealRing seconds={interruptSeconds} paused={data.paused} />
-                  <span className="text-[11px] text-white/50">{data.paused ? 'frozen' : 'seconds to decide'}</span>
-                </div>
+                <p className="text-[17px] font-medium leading-tight text-white">Play APPEAL?</p>
+                <p className="mt-1 text-[13px] leading-snug text-white/70">{interruptBody}</p>
               </div>
-              <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
+              <AppealRing seconds={interruptSeconds} paused={data.paused} />
+              <div className="flex shrink-0 flex-col gap-2">
                 <Button
                   variant="primary"
-                  size="sm"
-                  className="min-w-24"
+                  className="min-w-24 rounded-[12px] text-[15px] font-medium"
                   disabled={data.paused}
                   onClick={() => send({ t: 'appeal', cardId: appealCard.id })}
                 >
@@ -802,8 +862,7 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
                 </Button>
                 <Button
                   variant="secondary"
-                  size="sm"
-                  className="min-w-24"
+                  className="min-w-24 rounded-[12px] border-white/35 text-[15px] font-medium"
                   disabled={data.paused}
                   onClick={() => send({ t: 'pass' })}
                 >
@@ -811,7 +870,7 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
                 </Button>
               </div>
             </div>
-          </Panel>
+          </div>
         )}
 
         {isHost && visibleRejoinRequests.map((request) => (
@@ -839,14 +898,13 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
         ))}
 
         {interrupt && !showAppealSheet && (
-          <Panel padding="compact" className="bg-black/95 shadow-2xl">
-            <p className="flex items-center justify-center gap-2 text-sm text-white/70" role="status">
-              {view.role === 'player' && isEligible && !appealCard
-                ? 'No APPEAL in Hand · passing automatically'
-                : `Waiting on a decision…${data.paused ? ' (paused)' : ''}`}
+          <div className="mx-auto w-full max-w-[600px] rounded-2xl border-2 border-white bg-[#141414] px-4 py-[14px] shadow-2xl shadow-black/60" data-testid="interrupt-waiting">
+            <p className="flex items-center justify-center gap-3 text-sm text-white/70" role="status">
               <SpinnerDots className="text-white/40" />
+              <span>Waiting on a decision…</span>
+              <span className="font-mono text-sm tabular-nums text-white/80">{interruptSeconds ?? 0}s</span>
             </p>
-          </Panel>
+          </div>
         )}
       </NoticeStack>
 
@@ -924,13 +982,7 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
 
             <div className="ml-auto flex flex-wrap items-center gap-2">
               {data.phase !== 'finished' && (interrupt ? (
-                <>
-                  <Chip className="text-amber-100" title="Turn timer paused during an interrupt">Turn paused</Chip>
-                  <span className="flex items-center gap-1.5 text-xs text-amber-100">
-                    <span className="font-mono text-sm tabular-nums" data-testid="appeal-timer">{interruptSeconds ?? 0}s</span>
-                    <span className="text-white/50">appeal</span>
-                  </span>
-                </>
+                <Chip className="text-amber-100" title="Turn timer paused during an interrupt">Turn paused</Chip>
               ) : (
                 <span className="flex items-center gap-2">
                   <span
@@ -1008,10 +1060,7 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
                       {player.away && <Badge tone="warn">Away</Badge>}
                       {isActive && <Badge tone="accent">Turn</Badge>}
                     </button>
-                    <div className="my-2 flex items-center gap-1.5">
-                      <Chip>Table {player.table.length}</Chip>
-                    </div>
-                    <div className="flex justify-center">{renderTable(player.id, player.table, 'xs')}</div>
+                    <div className="mt-2 flex justify-center">{renderTable(player.id, player.table, 'xs')}</div>
                   </Panel>
                 );
               })}
@@ -1027,9 +1076,8 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
                 <span aria-hidden="true" className="pointer-events-none absolute inset-0 rounded-[var(--radius-panel)] ring-1 ring-white/25 motion-safe:animate-pulse-soft" />
               )}
               <div className="mb-3 flex items-center justify-between gap-3">
-                <h2 id="own-table-title" className="flex items-center gap-2 text-lg font-semibold">
-                  Your Table{" "}
-                  <Chip>{self.table.length}/9</Chip>
+                <h2 id="own-table-title" className="text-lg font-semibold">
+                  Your Table
                 </h2>
                 <details className="relative">
                   <summary
@@ -1094,17 +1142,14 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
               className="fixed inset-x-0 bottom-0 z-30 rounded-b-none border-x-0 border-b-0 bg-black md:static md:z-auto md:rounded-[var(--radius-panel)] md:border-x md:border-b"
             >
               <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-2">
-                <h2 className="flex items-center gap-2 text-base font-semibold">
-                  Your Hand{" "}
-                  <Chip>({hand.length})</Chip>
+                <h2 className="text-base font-semibold">
+                  Your Hand
                 </h2>
                 <div className="ml-auto flex items-center gap-2">
                   {view.role === 'player' && actionReady && (
                     <Button
-                      variant="primary"
-                      size="sm"
-                      disabled={Boolean(self && self.table.length > 9) || Boolean(targetForAction)}
-                      title={self && self.table.length > 9 ? 'Move extra Table cards to Hand first.' : undefined}
+                      variant="endTurn"
+                      disabled={Boolean(targetForAction)}
                       onClick={() => send({ t: 'endTurn' })}
                     >
                       End turn
@@ -1225,12 +1270,11 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
               </h2>
               <div className="flex items-center gap-2">
                 {isHost && selectedOpponent.id !== selfId && (
-                  <details className="relative">
-                    <summary className="flex h-11 w-11 cursor-pointer list-none items-center justify-center rounded-full border border-line text-white/70 hover:text-white" aria-label="Player actions">⋯</summary>
-                    <div className="absolute right-0 z-10 mt-2 rounded-[var(--radius-control)] border border-line bg-black/95 p-1">
-                      <Button size="sm" variant="danger" onClick={() => { send({ t: 'kick', targetId: selectedOpponent.id }); setSelectedOpponentId(null); }}>Kick player</Button>
-                    </div>
-                  </details>
+                  <MemberActionsMenu
+                    name={selectedOpponent.name}
+                    onMakeHost={() => { send({ t: 'transferHost', playerId: selectedOpponent.id }); setSelectedOpponentId(null); }}
+                    onKick={() => { send({ t: 'kick', targetId: selectedOpponent.id }); setSelectedOpponentId(null); }}
+                  />
                 )}
                 <IconButton label="Close table" onClick={() => setSelectedOpponentId(null)}>
                   <CloseIcon />
@@ -1263,20 +1307,32 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
               </IconButton>
             </div>
             <ul className="space-y-2">
-              {data.players.map((player) => (
-                <li key={player.id} className="flex items-center justify-between gap-3 rounded-[var(--radius-control)] border border-line p-3">
-                  <span className="flex min-w-0 items-center gap-2">
-                    <span className="truncate">{player.name}</span>
-                    {player.id === selfId && <Badge>You</Badge>}
-                    {player.id === data.hostId && <Badge tone="accent">Host</Badge>}
-                    {player.away && <Badge tone="warn">Away</Badge>}
-                  </span>
-                  <span className="flex shrink-0 items-center gap-2 text-sm text-white/60">
-                    <Chip>Table {player.table.length}</Chip>
-                    {player.id === selfId && <Chip>Hand {hand.length}</Chip>}
-                  </span>
-                </li>
-              ))}
+              {[
+                ...data.players.map((player) => ({ member: player, spectator: false })),
+                ...data.spectators.map((spectator) => ({ member: spectator, spectator: true }))
+              ].map(({ member, spectator }) => {
+                const isYou = member.id === selfId;
+                const isHostMember = member.id === data.hostId;
+                const away = !spectator && !(member as typeof data.players[number]).connected;
+                return (
+                  <li key={member.id} className="relative flex min-h-14 items-center gap-2 rounded-[var(--radius-control)] border border-line px-3 py-2">
+                    <span className="min-w-0 flex-1 truncate">{member.name}</span>
+                    <span className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+                      {isYou && <Badge>You</Badge>}
+                      {isHostMember && <Badge tone="accent">Host</Badge>}
+                      {spectator && <Badge>Spectator</Badge>}
+                      {away && <Badge tone="warn">Away</Badge>}
+                    </span>
+                    {isHost && member.id !== selfId && (
+                      <MemberActionsMenu
+                        name={member.name}
+                        onMakeHost={() => send({ t: 'transferHost', playerId: member.id })}
+                        onKick={() => send({ t: 'kick', targetId: member.id })}
+                      />
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           </Panel>
         </div>

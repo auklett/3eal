@@ -1,7 +1,9 @@
 import {
   publicInterrupt,
+  type InterruptState,
   type RoomPlayer,
-  type RoomState
+  type RoomState,
+  type TableCard
 } from '@3eal/engine';
 import type { PublicPlayer, PublicView, View } from '../src/shared/protocol';
 
@@ -35,7 +37,15 @@ export function publicView(room: RoomState): PublicView {
       ? { turn: room.pauseRemaining.turn, interrupt: room.pauseRemaining.interrupt }
       : null,
     interrupt: publicInterrupt(room.pendingAction?.interrupt ?? null),
-    lastInterruptResult: room.lastInterruptResult,
+    // `stolenToHandBy` is private to the actor: its public form only says that
+    // an action resolved, never where a card went.
+    lastInterruptResult: room.lastInterruptResult
+      ? {
+          kind: room.lastInterruptResult.kind,
+          outcome: room.lastInterruptResult.outcome,
+          resolvedAt: room.lastInterruptResult.resolvedAt
+        }
+      : null,
     deckCount: room.deck.length,
     winnerId: room.winnerId,
     winningSets: room.winningSets
@@ -55,13 +65,46 @@ export function publicView(room: RoomState): PublicView {
   return view;
 }
 
-export function spectatorView(room: RoomState): View {
-  return { role: 'spectator', data: publicView(room) };
+/**
+ * The targeted card is private. A STEAL or REVEAL reveals it to the owner of
+ * the card only; a CONCEAL reveals it to the players who may appeal it. The
+ * actor and every other viewer receive `null`, so a concealed identity never
+ * travels to anyone who should not already know it.
+ */
+function viewerInterruptCard(
+  room: RoomState,
+  viewerId: string
+): { cardId: string; card: TableCard; revealed: boolean } | null {
+  const interrupt: InterruptState | undefined = room.pendingAction?.interrupt;
+  if (!interrupt) return null;
+  if (interrupt.kind === 'CONCEAL') {
+    // The card is the actor's own revealed Table card, so every non-actor may
+    // be shown it. Filtering by responderIds would reveal who holds APPEAL.
+    if (viewerId === interrupt.actorId) return null;
+  } else if (viewerId !== interrupt.targetId) {
+    return null;
+  }
+  const target = room.players.find((player) => player.id === interrupt.targetId);
+  const slot = target?.table.find((candidate) => candidate.card.id === interrupt.targetCardId);
+  if (!slot) return null;
+  return { cardId: slot.card.id, card: slot.card, revealed: slot.revealed };
+}
+
+export function spectatorView(room: RoomState, viewerId: string): View {
+  return {
+    role: 'spectator',
+    data: {
+      ...publicView(room),
+      // Spectators can also be appointed host, so they need to know their own
+      // participant ID without seeing the host-only controls.
+      you: { id: viewerId, interruptCard: null }
+    }
+  };
 }
 
 export function playerView(room: RoomState, playerId: string): View {
   const player = room.players.find((candidate) => candidate.id === playerId);
-  if (!player) return spectatorView(room);
+  if (!player) return spectatorView(room, playerId);
   const data = publicView(room);
   const concealedOwn = Object.fromEntries(
     player.table.filter((slot) => !slot.revealed).map((slot) => [slot.card.id, slot.card])
@@ -74,6 +117,11 @@ export function playerView(room: RoomState, playerId: string): View {
         id: player.id,
         hand: player.hand,
         concealedOwn,
+        interruptCard: viewerInterruptCard(room, player.id),
+        // Private confirmation for the STEAL actor whose card went to Hand.
+        stolenToHandAt: room.lastInterruptResult?.stolenToHandBy === player.id
+          ? room.lastInterruptResult.resolvedAt
+          : null,
         rejoinRequests: player.id === room.hostId
           ? room.rejoinRequests.map((request) => ({ requestId: request.id, name: request.name }))
           : []
