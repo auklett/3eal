@@ -74,7 +74,9 @@ export const persistedRoomSchema = z.object({
     kind: z.enum(['CONCEAL', 'STEAL', 'REVEAL']),
     outcome: z.enum(['appealed', 'resolved', 'expired']),
     // Defaulted for rows written before the transient result notice existed.
-    resolvedAt: z.number().int().default(0)
+    resolvedAt: z.number().int().default(0),
+    // Private STEAL-actor marker; null for every other action and old rows.
+    stolenToHandBy: z.string().uuid().nullable().default(null)
   }).strict().nullable(),
   winnerId: z.string().uuid().nullable(),
   // Defaulted so rows persisted before the pause / winning-sets change still

@@ -14,6 +14,48 @@ export function CloseIcon({ className = 'h-4 w-4' }: { className?: string }) {
   );
 }
 
+/** An open book for the Rules control. */
+export function RulesIcon({ className = 'h-4 w-4' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5Z" />
+      <path d="M4 5.5v15M8 7h8M8 10h6" />
+    </svg>
+  );
+}
+
+/** Three horizontal dots for a row action menu (`ti-dots`). */
+export function DotsIcon({ className = 'h-5 w-5' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="currentColor" aria-hidden="true">
+      <circle cx="5" cy="12" r="1.6" />
+      <circle cx="12" cy="12" r="1.6" />
+      <circle cx="19" cy="12" r="1.6" />
+    </svg>
+  );
+}
+
+/** A small crown for "Make host" (`ti-crown`). */
+export function CrownIcon({ className = 'h-4 w-4' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 8l4 4 4-7 4 7 4-4-2 10H6L4 8Z" />
+      <path d="M6 20h12" />
+    </svg>
+  );
+}
+
+/** A person with an x for "Kick" (`ti-user-x`). */
+export function UserXIcon({ className = 'h-4 w-4' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="9" cy="8" r="3" />
+      <path d="M3.5 19a5.5 5.5 0 0 1 9.3-4" />
+      <path d="m16 16 4 4M20 16l-4 4" />
+    </svg>
+  );
+}
+
 export default function IconSprite() {
   return (
     <svg aria-hidden="true" className="pointer-events-none absolute h-0 w-0 overflow-hidden">

@@ -49,12 +49,14 @@ describe('filtered room views', () => {
     const room = startedRoom();
     const player = room.players[0];
     const playerSnapshot = playerView(room, player.id);
-    const spectatorSnapshot = spectatorView(room);
+    const spectatorSnapshot = spectatorView(room, '20000000-0000-4000-8000-000000000001');
     if (playerSnapshot.role !== 'player' || spectatorSnapshot.role !== 'spectator') {
       throw new Error('Expected filtered player and spectator views');
     }
     const { you: _private, ...playerPublic } = playerSnapshot.data;
-    expect(spectatorSnapshot.data).toEqual(playerPublic);
+    const { you: _spectatorPrivate, ...spectatorPublic } = spectatorSnapshot.data;
+    expect(spectatorPublic).toEqual(playerPublic);
+    expect(spectatorSnapshot.data.you).toEqual({ id: '20000000-0000-4000-8000-000000000001' });
     expect(JSON.stringify(spectatorSnapshot)).not.toContain('"hand":');
     expect(JSON.stringify(spectatorSnapshot)).not.toContain('secret-seed');
     expect(JSON.stringify(spectatorSnapshot)).not.toContain('10000000-0000-4000-8000-000000000001');
@@ -63,7 +65,7 @@ describe('filtered room views', () => {
 
   it('deals the three starting Table cards revealed to opponents and spectators', () => {
     const room = startedRoom();
-    const spectator = spectatorView(room);
+    const spectator = spectatorView(room, '20000000-0000-4000-8000-000000000001');
     if (spectator.role !== 'spectator') throw new Error('Expected spectator view');
     for (const player of spectator.data.players) {
       expect(player.table).toHaveLength(3);
@@ -78,7 +80,7 @@ describe('filtered room views', () => {
     owner.table[0].revealed = false;
     const concealedId = owner.table[0].card.id;
 
-    const spectator = spectatorView(room);
+    const spectator = spectatorView(room, '20000000-0000-4000-8000-000000000001');
     if (spectator.role !== 'spectator') throw new Error('Expected spectator view');
     const publicOwner = spectator.data.players.find((player) => player.id === owner.id);
     expect(publicOwner?.table[0]).toEqual({ state: 'concealed', cardId: concealedId });
@@ -89,14 +91,15 @@ describe('filtered room views', () => {
     const privateOwner = playerView(room, owner.id);
     if (privateOwner.role !== 'player') throw new Error('Expected player view');
     expect(Object.keys(privateOwner.data.you.concealedOwn)).toEqual([concealedId]);
-    expect(Object.keys(spectator.data)).not.toContain('you');
+    expect(spectator.data.you).toEqual({ id: '20000000-0000-4000-8000-000000000001' });
+    expect(Object.keys(spectator.data.you)).toEqual(['id']);
   });
 
   it('reveals all cards to spectators only after the game has ended', () => {
     const room = startedRoom();
     room.phase = 'finished';
     room.winnerId = room.players[0].id;
-    const view = spectatorView(room);
+    const view = spectatorView(room, '20000000-0000-4000-8000-000000000001');
     if (view.role !== 'spectator') throw new Error('Expected spectator view');
     expect(view.data.reveal?.players[room.players[0].id].table).toHaveLength(3);
     expect(view.data.players[0].table.every((slot) => slot.state === 'revealed')).toBe(true);
@@ -110,12 +113,98 @@ describe('filtered room views', () => {
     expect(snapshot.data.pauseRemaining?.interrupt).toBe(20_000);
     expect(snapshot.data.interrupt?.endsAt).toBeNull();
 
-    const spectator = spectatorView(room);
+    const spectator = spectatorView(room, '20000000-0000-4000-8000-000000000001');
     expect(spectator.data.interrupt?.endsAt).toBeNull();
 
     // A client must never see a stale numeric deadline (e.g. 0 = "expired").
     const serialized = JSON.parse(JSON.stringify(snapshot)) as { data: { interrupt: { endsAt: unknown } } };
     expect(serialized.data.interrupt.endsAt).toBeNull();
     expect(JSON.stringify(snapshot)).not.toContain('"endsAt":0');
+  });
+
+  it('shows a blind STEAL card only to its owner, never to the actor or a spectator', () => {
+    const room = startedRoom();
+    const active = room.players.find((player) => player.id === room.activePlayerId);
+    const target = room.players.find((player) => player.id !== room.activePlayerId);
+    if (!active || !target) throw new Error('Expected two players');
+    target.table[0].revealed = false;
+    const stolen = target.table[0].card;
+    active.hand.push({ id: 'blind-steal', kind: 'action', action: 'STEAL' });
+    const opened = reduceRoom(room, active.id, {
+      t: 'action',
+      cardId: 'blind-steal',
+      kind: 'STEAL',
+      targetId: target.id,
+      slot: 0
+    }, 10_000);
+    if ('error' in opened) throw new Error(opened.error);
+
+    const targetView = playerView(opened.state, target.id);
+    if (targetView.role !== 'player') throw new Error('Expected a player view');
+    expect(targetView.data.you.interruptCard).toEqual({ cardId: stolen.id, card: stolen, revealed: false });
+
+    const actorView = playerView(opened.state, active.id);
+    if (actorView.role !== 'player') throw new Error('Expected a player view');
+    expect(actorView.data.you.interruptCard).toBeNull();
+
+    const spectator = spectatorView(opened.state, '20000000-0000-4000-8000-000000000001');
+    expect(JSON.stringify(spectator)).not.toContain('"interruptCard"');
+    expect(JSON.stringify(actorView)).not.toContain(`"interruptCard":{"cardId":"${stolen.id}"`);
+  });
+
+  it('shows the CONCEAL card to eligible responders but not to its actor', () => {
+    const room = pausedInterruptRoom();
+    const actor = room.players.find((player) => player.id === room.activePlayerId);
+    const responder = room.players.find((player) => player.id !== room.activePlayerId);
+    if (!actor || !responder) throw new Error('Expected two players');
+    const card = actor.table[0].card;
+
+    const actorView = playerView(room, actor.id);
+    if (actorView.role !== 'player') throw new Error('Expected a player view');
+    expect(actorView.data.you.interruptCard).toBeNull();
+
+    const responderView = playerView(room, responder.id);
+    if (responderView.role !== 'player') throw new Error('Expected a player view');
+    expect(responderView.data.you.interruptCard).toEqual({ cardId: card.id, card, revealed: true });
+  });
+
+  it('marks a stolen-to-Hand result only in the actor private view', () => {
+    const room = startedRoom();
+    const active = room.players.find((player) => player.id === room.activePlayerId);
+    const target = room.players.find((player) => player.id !== room.activePlayerId);
+    if (!active || !target) throw new Error('Expected two players');
+    active.table = Array.from({ length: 9 }, (_, index) => ({
+      card: {
+        id: `full-${index}`,
+        kind: 'normal' as const,
+        color: 'periwinkle' as const,
+        number: 1 as const,
+        shape: 'circle' as const
+      },
+      revealed: true
+    }));
+    target.hand = target.hand.filter((card) => !(card.kind === 'action' && card.action === 'APPEAL'));
+    active.hand.push({ id: 'hand-steal', kind: 'action', action: 'STEAL' });
+    const result = reduceRoom(room, active.id, {
+      t: 'action',
+      cardId: 'hand-steal',
+      kind: 'STEAL',
+      targetId: target.id,
+      slot: 0
+    }, 10_000);
+    if ('error' in result) throw new Error(result.error);
+
+    const actorView = playerView(result.state, active.id);
+    if (actorView.role !== 'player') throw new Error('Expected a player view');
+    expect(actorView.data.you.stolenToHandAt).toBe(10_000);
+
+    const targetView = playerView(result.state, target.id);
+    if (targetView.role !== 'player') throw new Error('Expected a player view');
+    expect(targetView.data.you.stolenToHandAt).toBeNull();
+
+    const spectator = spectatorView(result.state, '20000000-0000-4000-8000-000000000001');
+    expect(spectator.data.lastInterruptResult).toEqual({ kind: 'STEAL', outcome: 'resolved', resolvedAt: 10_000 });
+    expect(JSON.stringify(spectator)).not.toContain('stolenToHandBy');
+    expect(JSON.stringify(actorView)).not.toContain('stolenToHandBy');
   });
 });

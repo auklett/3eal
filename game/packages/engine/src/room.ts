@@ -57,6 +57,8 @@ export type LastInterruptResult = {
   outcome: 'appealed' | 'resolved' | 'expired';
   /** Server timestamp of the resolution; clients key the transient notice on it. */
   resolvedAt: number;
+  /** Private: the STEAL actor when the stolen card went to their Hand. */
+  stolenToHandBy?: string | null;
 };
 
 /**
@@ -247,10 +249,6 @@ function finishTurn(state: RoomState, now: number): void {
   const keptActionCards = active.hand.filter((card) => card.kind === 'action');
   discardToDeck(state, active.hand.filter((card) => card.kind !== 'action'));
   active.hand = keptActionCards;
-  if (active.table.length > 9) {
-    const removed = active.table.splice(9);
-    discardToDeck(state, removed.map((slot) => slot.card));
-  }
 
   const winningPartition = active.table.length === 9
     ? findWinningPartition(active.table.map((slot) => slot.card))
@@ -283,6 +281,7 @@ function resolvePendingAction(
   const remaining = state.turnRemainingMs ?? 0;
   const actor = getPlayer(state, action.actorId);
   const target = getPlayer(state, action.targetId);
+  let stolenToHand = false;
   if (outcome === 'appealed') {
     if (!appealedCard) throw new Error('An appealed interrupt requires an APPEAL card');
     discardToDeck(state, [pending.actionCard, appealedCard]);
@@ -297,12 +296,23 @@ function resolvePendingAction(
       targetSlot.revealed = true;
     } else {
       target.table.splice(targetSlotIndex, 1);
-      actor.table.push(targetSlot);
+      if (actor.table.length >= 9) {
+        // A full Table receives the stolen card in Hand; it is a normal Hand
+        // card and enters concealed if it is placed later.
+        actor.hand.push(targetSlot.card);
+        stolenToHand = true;
+      } else {
+        // Keep the target's reveal state when the card moves to a Table.
+        actor.table.push(targetSlot);
+      }
     }
     discardToDeck(state, [pending.actionCard]);
   }
 
   setPublicResult(state, action.kind, outcome, now);
+  if (stolenToHand && state.lastInterruptResult) {
+    state.lastInterruptResult.stolenToHandBy = action.actorId;
+  }
   state.pendingAction = null;
   state.turnEndsAt = null;
 
@@ -624,6 +634,12 @@ function doAction(
   if (intent.kind === 'STEAL' && targetSlot.card.kind !== 'normal' && targetSlot.card.kind !== 'teal') {
     return 'Only Normal or TEAL cards can be stolen';
   }
+  // A Table can never hold more than nine cards. Normal play resolves a STEAL
+  // into Hand when the Table is full; a legacy room already over the limit is
+  // still rejected so it cannot become worse.
+  if (intent.kind === 'STEAL' && actor.table.length > 9) {
+    return 'Table cannot hold more than 9 cards; move a card to your Hand first';
+  }
 
   actor.hand.splice(handIndex, 1);
   const action: InterruptActionIntent = {
@@ -884,6 +900,10 @@ export function reduceRoom(state: RoomState, actorId: string, intent: RoomIntent
       return { state, error: 'Only Normal and TEAL cards can be moved to your Table' };
     }
     if (intent.slot < 0 || intent.slot > 8) return { state, error: 'Table slot is out of range' };
+    // Defensive: a Table can never hold more than nine cards. Normal play
+    // cannot produce this state (a ninth-card swap replaces a card), but an
+    // old persisted room must not grow any further.
+    if (player.table.length > 9) return { state, error: 'Table cannot hold more than 9 cards' };
     if (player.table.length >= 9) {
       const replaced = nextPlayer.table[intent.slot];
       if (!replaced) return { state, error: 'Choose a Table card to swap with' };
@@ -942,6 +962,29 @@ export function setParticipantConnected(state: RoomState, participantId: string,
     if (spectator && !spectator.left) spectator.connected = connected;
   }
   return next;
+}
+
+/**
+ * Host management, handled outside the game reducer like kicking and rejoin
+ * approval. Valid in the lobby, during play, while paused, and when finished.
+ * Only `hostId` changes: the old host keeps their seat, role, pause state, and
+ * every pending rejoin request.
+ */
+export function transferHostTo(state: RoomState, actorId: string, targetId: string): ReduceResult {
+  if (actorId !== state.hostId) return { state, error: 'Only the host can transfer host' };
+  if (actorId === targetId) return { state, error: 'The host cannot transfer host to themselves' };
+  const player = state.players.find((candidate) =>
+    candidate.id === targetId && !candidate.kicked && !candidate.left
+  );
+  const spectator = state.spectators.find((candidate) =>
+    candidate.id === targetId && !candidate.left
+  );
+  const member = player ?? spectator;
+  if (!member) return { state, error: 'That member is not in this room' };
+  if (!member.connected) return { state, error: 'You can only transfer host to a connected member' };
+  const next = structuredClone(state);
+  next.hostId = targetId;
+  return { state: next };
 }
 
 export function kickParticipant(state: RoomState, actorId: string, targetId: string, now: number): ReduceResult {

@@ -48,6 +48,9 @@ export interface ViewOptions {
   awayIds?: string[];
   spectators?: Array<{ id: string; name: string; connected: boolean }>;
   extraPlayers?: number;
+  interruptCard?: { cardId: string; card: Card; revealed: boolean } | null;
+  stolenToHandAt?: number | null;
+  viewerId?: string;
 }
 
 function concealed(cards: Card[]): PublicSlot[] {
@@ -68,6 +71,7 @@ export function playerView(options: ViewOptions = {}): View {
     table: []
   }));
 
+  const viewerId = options.viewerId ?? ALICE;
   const data: Record<string, unknown> = {
     roomCode: 'ABCD',
     phase,
@@ -92,10 +96,12 @@ export function playerView(options: ViewOptions = {}): View {
     winnerId: options.winnerId === undefined ? (phase === 'finished' ? ALICE : null) : options.winnerId,
     winningSets: options.winningSets ?? null,
     you: {
-      id: ALICE,
+      id: viewerId,
       hand: options.aliceHand ?? [],
       concealedOwn: Object.fromEntries(aliceCards.map((card) => [card.id, card])),
-      rejoinRequests: options.rejoinRequests ?? []
+      interruptCard: options.interruptCard ?? null,
+      stolenToHandAt: options.stolenToHandAt ?? null,
+      rejoinRequests: viewerId === (options.hostId ?? ALICE) ? options.rejoinRequests ?? [] : []
     }
   };
 
@@ -110,6 +116,17 @@ export function playerView(options: ViewOptions = {}): View {
   }
 
   return { role: 'player', data } as unknown as View;
+}
+
+/** A spectator view: public information plus only the spectator's own ID. */
+export function spectatorView(options: ViewOptions = {}): View {
+  const view = playerView(options);
+  if (view.role !== 'player') throw new Error('Expected a player view');
+  const { you, ...publicData } = view.data;
+  return {
+    role: 'spectator',
+    data: { ...publicData, you: { id: you.id } }
+  } as unknown as View;
 }
 
 export async function mockConfig(page: Page): Promise<void> {

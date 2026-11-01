@@ -12,6 +12,7 @@ import {
   resolveRejoinRequest,
   returnToLobby,
   setParticipantConnected,
+  transferHostTo,
   type RoomState
 } from './index';
 
@@ -34,6 +35,43 @@ function startRoomWithPlayers(count: number, seed = 'seed'): RoomState {
   const started = reduceRoom(room, 'host', { t: 'start' }, 1000);
   if ('error' in started) throw new Error(started.error);
   return started.state;
+}
+
+function fillTable(player: RoomState['players'][number], count: number, revealed: boolean): void {
+  player.table = Array.from({ length: count }, (_, index) => {
+    const card = {
+      id: `fill-${player.id}-${index}`,
+      kind: 'normal' as const,
+      color: 'periwinkle' as const,
+      number: 1 as const,
+      shape: 'circle' as const
+    };
+    return { card, revealed };
+  });
+}
+
+function performSteal(
+  room: RoomState,
+  tableCount: number,
+  revealed: boolean
+): { room: RoomState; stolen: RoomState['players'][number]['table'][number] } {
+  const active = room.players.find((player) => player.id === room.activePlayerId);
+  const target = room.players.find((player) => player.id !== room.activePlayerId);
+  if (!active || !target) throw new Error('Expected two players');
+  fillTable(active, tableCount, revealed);
+  target.table[0].revealed = revealed;
+  const stolen = target.table[0];
+  target.hand = target.hand.filter((card) => !(card.kind === 'action' && card.action === 'APPEAL'));
+  active.hand.push({ id: `steal-${tableCount}`, kind: 'action', action: 'STEAL' });
+  const result = reduceRoom(room, active.id, {
+    t: 'action',
+    cardId: `steal-${tableCount}`,
+    kind: 'STEAL',
+    targetId: target.id,
+    slot: 0
+  }, 1000);
+  if ('error' in result) throw new Error(result.error);
+  return { room: result.state, stolen };
 }
 
 function finishedRoom(): RoomState {
@@ -185,6 +223,82 @@ describe('room rules', () => {
       .toEqual({ card: stolen, revealed: false });
   });
 
+  it('keeps a steal on the Table below nine cards and preserves its reveal state', () => {
+    const { room, stolen } = performSteal(startTwoPlayerRoom(), 8, false);
+    const active = room.players.find((player) => player.id === room.activePlayerId);
+    if (!active) throw new Error('Expected an active player');
+    expect(active.table).toHaveLength(9);
+    expect(active.table.at(-1)).toEqual(stolen);
+    expect(active.table.at(-1)?.revealed).toBe(false);
+    expect(active.hand.some((card) => card.id === stolen.card.id)).toBe(false);
+    expect(room.lastInterruptResult).toEqual({ kind: 'STEAL', outcome: 'resolved', resolvedAt: 1000 });
+  });
+
+  it('sends a steal to Hand when the Table already has exactly nine cards', () => {
+    const { room, stolen } = performSteal(startTwoPlayerRoom(), 9, true);
+    const active = room.players.find((player) => player.id === room.activePlayerId);
+    if (!active) throw new Error('Expected an active player');
+    expect(active.table).toHaveLength(9);
+    expect(active.hand.some((card) => card.id === stolen.card.id)).toBe(true);
+    expect(room.lastInterruptResult).toEqual({
+      kind: 'STEAL',
+      outcome: 'resolved',
+      resolvedAt: 1000,
+      stolenToHandBy: active.id
+    });
+  });
+
+  it('changes nothing when a steal is appealed', () => {
+    const room = startTwoPlayerRoom();
+    const active = room.players.find((player) => player.id === room.activePlayerId);
+    const target = room.players.find((player) => player.id !== room.activePlayerId);
+    if (!active || !target) throw new Error('Expected two players');
+    fillTable(active, 9, true);
+    const before = structuredClone(target.table);
+    active.hand.push({ id: 'appealed-steal', kind: 'action', action: 'STEAL' });
+
+    const opened = reduceRoom(room, active.id, {
+      t: 'action',
+      cardId: 'appealed-steal',
+      kind: 'STEAL',
+      targetId: target.id,
+      slot: 0
+    }, 1000);
+    if ('error' in opened) throw new Error(opened.error);
+    const appeal = target.hand.find((card) => card.kind === 'action' && card.action === 'APPEAL');
+    if (!appeal) throw new Error('Expected the target to hold APPEAL');
+    const appealed = reduceRoom(opened.state, target.id, { t: 'appeal', cardId: appeal.id }, 2000);
+    if ('error' in appealed) throw new Error(appealed.error);
+
+    expect(appealed.state.players.find((player) => player.id === target.id)?.table).toEqual(before);
+    expect(appealed.state.players.find((player) => player.id === active.id)?.table).toHaveLength(9);
+    expect(appealed.state.lastInterruptResult).toEqual({ kind: 'STEAL', outcome: 'appealed', resolvedAt: 2000 });
+  });
+
+  it('is deterministic for the same seed and action sequence', () => {
+    const first = performSteal(startTwoPlayerRoom(), 9, false);
+    // startTwoPlayerRoom always uses the same seed, so the deal and resolution
+    // must be identical, including which card went to Hand.
+    const second = performSteal(startTwoPlayerRoom(), 9, false);
+    expect(first).toEqual(second);
+  });
+
+  it('never leaves more than nine cards on a Table after a steal', () => {
+    fc.assert(fc.property(
+      fc.integer({ min: 3, max: 9 }),
+      fc.boolean(),
+      (tableCount, revealed) => {
+        const { room } = performSteal(startTwoPlayerRoom(), tableCount, revealed);
+        for (const player of room.players) {
+          expect(player.table.length).toBeLessThanOrEqual(9);
+        }
+        const active = room.players.find((player) => player.id === room.activePlayerId);
+        if (!active) throw new Error('Expected an active player');
+        expect(active.table).toHaveLength(tableCount === 9 ? 9 : tableCount + 1);
+      }
+    ), { numRuns: 10 });
+  });
+
   it('rejects REVEAL without consuming the action card when no concealed card exists', () => {
     const room = startTwoPlayerRoom();
     const active = room.players.find((player) => player.id === room.activePlayerId);
@@ -233,6 +347,101 @@ describe('room rules', () => {
     if (!nextHost) throw new Error('Expected a second player');
     const disconnected = setParticipantConnected(room, room.hostId, false, 500);
     expect(disconnected.hostId).toBe(nextHost.id);
+  });
+
+  it('transfers host to a connected player without changing seats or phase', () => {
+    const room = startTwoPlayerRoom();
+    const guest = room.players.find((player) => player.id !== room.hostId);
+    if (!guest) throw new Error('Expected a second player');
+    const result = transferHostTo(room, room.hostId, guest.id);
+    if ('error' in result) throw new Error(result.error);
+    expect(result.state.hostId).toBe(guest.id);
+    expect(result.state.players).toEqual(room.players);
+    expect(result.state.spectators).toEqual(room.spectators);
+    expect(result.state.phase).toBe('playing');
+    // The helper is pure: the input room is untouched.
+    expect(room.hostId).toBe('host');
+  });
+
+  it('transfers host while paused and leaves the pause and rejoin requests alone', () => {
+    const room = startTwoPlayerRoom();
+    const guest = room.players.find((player) => player.id !== room.hostId);
+    if (!guest) throw new Error('Expected a second player');
+    const request = requestRejoin(room, 'req', 'new-session', 'spectator-public', 'Guest', 0);
+    if ('error' in request) throw new Error(request.error);
+    const paused = reduceRoom(request.state, room.hostId, { t: 'pause' }, 1_000);
+    if ('error' in paused) throw new Error(paused.error);
+
+    const result = transferHostTo(paused.state, room.hostId, guest.id);
+    if ('error' in result) throw new Error(result.error);
+    expect(result.state.hostId).toBe(guest.id);
+    expect(result.state.paused).toBe(true);
+    expect(result.state.pauseRemaining).toEqual(paused.state.pauseRemaining);
+    expect(result.state.rejoinRequests).toEqual(paused.state.rejoinRequests);
+  });
+
+  it('transfers host in the lobby and to a connected spectator', () => {
+    const created = createRoom('ABCD', 'host', 'host-session', 'Host', 'seed');
+    const guest = addParticipant(created, 'guest', 'Guest', 'player', 'guest-session');
+    if ('error' in guest) throw new Error(guest.error);
+    const spectator = addParticipant(guest.state, 'spec', 'Spec', 'spectator', 'spec-session');
+    if ('error' in spectator) throw new Error(spectator.error);
+
+    const lobbyTransfer = transferHostTo(spectator.state, 'host', 'guest');
+    if ('error' in lobbyTransfer) throw new Error(lobbyTransfer.error);
+    expect(lobbyTransfer.state.hostId).toBe('guest');
+    expect(lobbyTransfer.state.phase).toBe('lobby');
+
+    const spectatorTransfer = transferHostTo(lobbyTransfer.state, 'guest', 'spec');
+    if ('error' in spectatorTransfer) throw new Error(spectatorTransfer.error);
+    expect(spectatorTransfer.state.hostId).toBe('spec');
+  });
+
+  it('rejects invalid host transfer attempts with clear errors', () => {
+    const room = startTwoPlayerRoom();
+    const guest = room.players.find((player) => player.id !== room.hostId);
+    if (!guest) throw new Error('Expected a second player');
+
+    expect(transferHostTo(room, guest.id, room.hostId))
+      .toMatchObject({ error: 'Only the host can transfer host' });
+    expect(transferHostTo(room, room.hostId, room.hostId))
+      .toMatchObject({ error: 'The host cannot transfer host to themselves' });
+    expect(transferHostTo(room, room.hostId, 'missing-member'))
+      .toMatchObject({ error: 'That member is not in this room' });
+
+    const disconnected = structuredClone(room);
+    const disconnectedGuest = disconnected.players.find((player) => player.id === guest.id);
+    if (!disconnectedGuest) throw new Error('Expected the guest');
+    disconnectedGuest.connected = false;
+    expect(transferHostTo(disconnected, room.hostId, guest.id))
+      .toMatchObject({ error: 'You can only transfer host to a connected member' });
+
+    const kicked = structuredClone(room);
+    const kickedGuest = kicked.players.find((player) => player.id === guest.id);
+    if (!kickedGuest) throw new Error('Expected the guest');
+    kickedGuest.kicked = true;
+    expect(transferHostTo(kicked, room.hostId, guest.id))
+      .toMatchObject({ error: 'That member is not in this room' });
+
+    const left = structuredClone(room);
+    const leftGuest = left.players.find((player) => player.id === guest.id);
+    if (!leftGuest) throw new Error('Expected the guest');
+    leftGuest.left = true;
+    expect(transferHostTo(left, room.hostId, guest.id))
+      .toMatchObject({ error: 'That member is not in this room' });
+  });
+
+  it('always leaves exactly one host after repeated transfers', () => {
+    fc.assert(fc.property(fc.integer({ min: 2, max: 10 }), (count) => {
+      let room = startRoomWithPlayers(count);
+      const target = room.players.find((player) => player.id !== room.hostId);
+      if (!target) throw new Error('Expected another player');
+      const result = transferHostTo(room, room.hostId, target.id);
+      if ('error' in result) throw new Error(result.error);
+      room = result.state;
+      const members = [...room.players, ...room.spectators];
+      expect(members.filter((member) => member.id === room.hostId)).toHaveLength(1);
+    }), { numRuns: 9 });
   });
 
   it('requires host approval before binding a rejoin request to its seat', () => {

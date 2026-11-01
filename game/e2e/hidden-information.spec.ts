@@ -69,13 +69,33 @@ function makeViews(aliceConcealed: Set<string> = new Set()): { alice: View; bob:
   return {
     alice: {
       role: 'player',
-      data: { ...base, you: { id: aliceId, hand: [aliceHandCard], concealedOwn: concealedOwn(aliceStart, aliceConcealed), rejoinRequests: [] } }
+      data: {
+        ...base,
+        you: {
+          id: aliceId,
+          hand: [aliceHandCard],
+          concealedOwn: concealedOwn(aliceStart, aliceConcealed),
+          interruptCard: null,
+          stolenToHandAt: null,
+          rejoinRequests: []
+        }
+      }
     },
     bob: {
       role: 'player',
-      data: { ...base, you: { id: bobId, hand: [bobHandCard], concealedOwn: {}, rejoinRequests: [] } }
+      data: {
+        ...base,
+        you: {
+          id: bobId,
+          hand: [bobHandCard],
+          concealedOwn: {},
+          interruptCard: null,
+          stolenToHandAt: null,
+          rejoinRequests: []
+        }
+      }
     },
-    spectator: { role: 'spectator', data: base }
+    spectator: { role: 'spectator', data: { ...base, you: { id: viewerId } } }
   };
 }
 
@@ -183,9 +203,9 @@ test('at game start, hands stay private while every starting Table card is visib
   const { context, alicePage, bobPage, spectatorPage, aliceFrames, bobFrames, spectatorFrames } = await openPages(browser, views);
 
   await Promise.all([
-    expect(alicePage.getByText('Your Hand (1)')).toBeVisible(),
-    expect(bobPage.getByText('Your Hand (1)')).toBeVisible(),
-    expect(spectatorPage.getByText('Your Hand (1)')).toHaveCount(0),
+    expect(alicePage.getByRole('heading', { name: 'Your Hand' })).toBeVisible(),
+    expect(bobPage.getByRole('heading', { name: 'Your Hand' })).toBeVisible(),
+    expect(spectatorPage.getByRole('heading', { name: 'Your Hand' })).toHaveCount(0),
     expect(spectatorPage.getByText('Request to rejoin as')).toBeVisible(),
     expect.poll(() => aliceFrames.length).toBeGreaterThanOrEqual(1),
     expect.poll(() => bobFrames.length).toBeGreaterThanOrEqual(1),
