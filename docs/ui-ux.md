@@ -11,15 +11,15 @@
   * `sm` — 64px × 90px (overlays, the opponent-table modal, and the Table/Hand on narrow screens).
   * `xs` — 32px × 45px (the opponents rail's mini 3×3 Table).
   * `rules` — 56px × 78px (static example cards inside the Rules overlay).
-* **Table Layout:** 3×3 grid, normally max 9 cards (Normal + TEAL only); the three starting cards are face-up.
-* **Hand Layout:** On desktop it is the column beside the Table; on mobile it is a bottom dock with a horizontal, scrollable card row. No fixed maximum. Every player starts with one CONCEAL, one STEAL, one REVEAL, and one APPEAL. Holds drawn cards and cards moved off the Table; every NORMAL/TEAL card left in Hand is shuffled back into the deck at turn end, while unused Action cards persist across turns.
+* **Table Layout:** 3×3 grid, max 9 cards (Normal + TEAL only); the three starting cards are face-up. No Table card count is displayed.
+* **Hand Layout:** On desktop it is the column beside the Table; on mobile it is a bottom dock with a horizontal, scrollable card row. No fixed maximum or displayed Hand count. Every player starts with one CONCEAL, one STEAL, one REVEAL, and one APPEAL. Holds drawn cards and cards moved off the Table; every NORMAL/TEAL card left in Hand is shuffled back into the deck at turn end, while unused Action cards persist across turns.
 * **Card Rearrangement:** Drag-and-drop, or tap-to-select then tap another slot to move/swap. Applies to the **Table** at any time. Reordering is local-only and is not sent to the server or synchronized to opponents.
 
 ### 1.2 Design tokens (`src/index.css`, Tailwind v4 `@theme`)
 | Token | Value | Used for |
 |---|---|---|
 | `--font-sans` | `"Outfit", ui-sans-serif, system-ui, …` | All UI text |
-| `--font-mono` | `"JetBrains Mono", ui-monospace, …` | Room codes, timers, counts, `Deck`, turn numbers (always with `tabular-nums`) |
+| `--font-mono` | `"JetBrains Mono", ui-monospace, …` | Room codes, timers, `Deck`, turn numbers (always with `tabular-nums`) |
 | `--radius-panel` | `1rem` | Panels (`rounded-2xl`) |
 | `--radius-control` | `0.75rem` | Buttons, inputs, slots |
 | `--color-line` | `rgb(255 255 255 / 0.1)` | All 1px borders |
@@ -28,13 +28,13 @@
 | `--color-muted` | `rgb(255 255 255 / 0.55)` | Secondary text |
 | `--animate-float / fade-in / fade-out / card-in / pop-in / pulse-soft / shuffle-out / trait-pulse` | keyframes | The motion vocabulary (see 6, all disabled under `prefers-reduced-motion`) |
 
-* **Fonts:** Outfit (UI) and JetBrains Mono (codes/timers/counts). They are referenced first in the token stacks with system fallbacks, so the app renders correctly even where the webfonts are not installed.
+* **Fonts:** Outfit (UI) and JetBrains Mono (codes/timers). They are referenced first in the token stacks with system fallbacks, so the app renders correctly even where the webfonts are not installed.
 * **Color-blind mode** and reduced motion are honoured across every new component.
 
 ### 1.3 Shared primitives (`src/components/ui/`)
 * **`Panel`** — the single surface: `rounded-2xl`, `border` `white/10`, `bg white/[0.03]`, with `padding` variants (`none` / `compact` / `normal` / `roomy`).
-* **`Button`** — `primary` = white fill + black text; `secondary` = outline; `ghost` = text; `danger` = rose accent. Every size keeps a **≥ 44px** touch target and a visible focus ring.
-* **`Chip`** — small monospace pill for room codes, timers, and `Deck n`.
+* **`Button`** — `primary` = white fill + black text; `secondary` = outline; `ghost` = text; `danger` = rose accent. `endTurn` is the one deliberate card-colour exception: rose `#C06060` fill with black text, used only for End turn; its disabled state remains grey. Every size keeps a **≥ 44px** touch target and a visible focus ring.
+* **`Chip`** — small monospace pill for room codes, timers, and `Deck n`; no Table or Hand count chips.
 * **`Badge`** — tiny status label (`Host`, `You`, `Away`, `Turn`).
 * **`IconButton`** — 44px square bordered icon button with a required accessible `label`.
 * **`ConnectionDot`** — green when connected, amber (gently pinging) when reconnecting.
@@ -86,11 +86,12 @@
 
 ### 3.2 Lobby View (`/lobby/:code`)
 A single centered column (max ~520px) using the same glass-panel feel as Home, built entirely from the shared primitives.
+* **Header:** a text-labeled **Rules** ghost button sits at the top-right beside the **Lobby** label and opens the shared Rules overlay. It uses a transparent background, 1px white/25% border, ~10px radius, 13px text, and at least a 44px touch target. At narrow widths it becomes icon-only while retaining `aria-label="Rules"` and the same touch target.
 * **Room code hero:** the code is large JetBrains Mono, letter-spaced, and click-to-copy; a brief inline **Copied** confirmation appears under it (no toast). A small **connection dot** (green connected / amber reconnecting) replaces the old "connected" text; a real drop also shows a **Reconnecting…** label.
 * **Players list:** one row per member — a neutral monochrome avatar circle (first letter), the name, a **Host** badge, and a **You** badge for the viewer, plus an **Away** badge when applicable. New members animate in and leavers fade out. Spectators live in a collapsed-by-default **Spectators (n)** group.
 * **Your name:** edited inline (Edit → input → Save/Cancel) rather than in a separate section. A rejected rename shows the server's message inline under the field and keeps the current name. The unique numbered `Player N` default behaviour is unchanged.
 * **Role switch:** a two-option segmented control (**Player** / **Spectator**) built as an ARIA radiogroup. Both options are always enabled, at least 44px tall, with arrow-key navigation; selecting the current role is a no-op. It sends `setRole`.
-* **Host controls (host only, one panel):** a **Turn timer** slider (15–180 s, step 5) paired with a fixed-width mono numeric input (`seconds`, 15–180, default 60). The slider sends on release and the input sends on Enter/blur; both clamp to 15–180, and an invalid/empty value falls back to the authoritative value with an inline error if the server rejects it. **Start game** is the primary white full-width button, disabled with a one-line reason when there are fewer than two players, more than ten players (`Up to 10 players can start a game. Move extras to Spectator.`), or the connection is down; **Kick** rows use a two-step confirm (Kick → Kick/Cancel) instead of a tiny link. Non-hosts instead see **Waiting for host to start** with an animated dots indicator.
+* **Host controls (host only, one panel):** a **Turn timer** slider (15–180 s, step 5) paired with a fixed-width mono numeric input (`seconds`, 15–180, default 60). The slider sends on release and the input sends on Enter/blur; both clamp to 15–180, and an invalid/empty value falls back to the authoritative value with an inline error if the server rejects it. **Start game** is the primary white full-width button, disabled with a one-line reason when there are fewer than two players, more than ten players (`Up to 10 players can start a game. Move extras to Spectator.`), or the connection is down. Every non-host row, including spectators, has a 44px actions button with **Make host** and **Kick**, each requiring an in-menu two-step confirm. Non-hosts instead see **Waiting for host to start** with an animated dots indicator.
 * **Leave room:** a ghost button at the bottom. It sends `leaveRoom`, waits for the server's `left` confirmation, then returns home; it never navigates before confirmation.
 * **Room not found** and **Reconnecting…** keep their exact distinct behaviour (a missing room never shows reconnecting). A missing room renders a centered card offering **Create lobby using the entered code** and **Return home**.
 * A subtle floating trio of decorative cards sits above the panel, echoing Home.
@@ -108,21 +109,21 @@ A single centered column (max ~520px) using the same glass-panel feel as Home, b
   * While paused the banner reads **Game paused by host** and every countdown shows its frozen value.
   * A transient interrupt result (for example "STEAL was appealed.") appears here for five seconds, keyed by the server's result timestamp so a reconnect or reload does not show it again.
   * The viewer's own area and the banner get a soft white ring/glow when it is their turn.
-* **Opponents rail:** a horizontally scrollable row under the banner (a grid on wide screens) so every opponent's Table is visible without scrolling. Each opponent is a compact panel: name, away/online dot, an active-**Turn** badge, a mono `Table n` chip, and a **mini 3×3 Table** at `xs` size — revealed cards face-up with the tiny eye badge, concealed cards as the generic back, empty slots as faint dashed outlines. Tapping the opponent's name opens a larger view of their Table for reading cards. The host's **Kick** lives inside a host-only (⋯) overflow menu in that modal, not as a visible link. Opponent hand size/holdings are never shown.
-  * *No set progress:* set membership depends on concealed card identities and players must work out their own sets, so the rail shows only the public Table count.
+* **Opponents rail:** a horizontally scrollable row under the banner (a grid on wide screens) so every opponent's Table is visible without scrolling. Each opponent is a compact panel: name, away/online dot, an active-**Turn** badge, and a **mini 3×3 Table** at `xs` size — revealed cards face-up with the tiny eye badge, concealed cards as the generic back, empty slots as faint dashed outlines. Tapping the opponent's name opens a larger view of their Table for reading cards. The host's **Kick** lives inside a host-only (⋯) overflow menu in that modal, not as a visible link. Opponent Hand size/holdings are never shown.
+  * *No card counts or set progress:* card counts and set membership are intentionally not displayed; the rail shows only public Table cards.
 * **Your area:**
-  * **Table:** the visual hero — a centered 3×3 grid (`md` cards on desktop, `sm` on narrow screens). Header **"Your Table"** with a mono `n/9`. Empty slots are dashed rounded outlines with a subtle `+` on hover/tap. A small info control reveals "Tap two slots to swap · drag to rearrange (local only)" in a popover, plus a one-time dismissible first-use hint. Set-progress hints are intentionally absent (see 2.1). Steering hint: the board never relies on a tiny line of text.
-  * **Hand:** a dock. Portrait mobile fixes it to the bottom as a horizontally scrollable row with a Show/Hide handle; desktop places it beside the Table. Header **"Your Hand"** with a mono count. The empty state is a single subtle line. Action cards are grouped to the right behind a small **Action** divider; Normal/TEAL cards sit left of it with the hint "returns to deck at turn end".
+  * **Table:** the visual hero — a centered 3×3 grid (`md` cards on desktop, `sm` on narrow screens). Header **"Your Table"** with no card count. Empty slots are dashed rounded outlines with a subtle `+` on hover/tap. A small info control reveals "Tap two slots to swap · drag to rearrange (local only)" in a popover, plus a one-time dismissible first-use hint. Set-progress hints are intentionally absent (see 2.1). Steering hint: the board never relies on a tiny line of text.
+  * **Hand:** a dock. Portrait mobile fixes it to the bottom as a horizontally scrollable row with a Show/Hide handle; desktop places it beside the Table. Header **"Your Hand"** with no card count. The empty state is a single subtle line. Action cards are grouped to the right behind a small **Action** divider; Normal/TEAL cards sit left of it with the hint "returns to deck at turn end".
   * **Controls:** an "End turn" primary button sits with the Hand header, and the contextual **Move Selected to Table / Move Selected to Hand** buttons appear (just under the Table) only when a card is selected and the action is legal — otherwise hidden. Pending ("Submitting move…"), confirmation, and inline recoverable errors are shown exactly as before (4.4).
   * Selected/dragging ring and eye-badge placement are unchanged (2.3).
 * **Center area:** no draw or discard pile graphics. The remaining deck count stays in the turn banner; all discarded cards shuffle straight into the deck.
 * **Opponent Areas:** rendered in the opponents rail and in the per-opponent modal (see above); opponent Hand counts and contents are hidden.
 * **Game over:** the Game Over panel moves to the top of the board, directly under the top bar, and the page scrolls to it, focuses its heading, and announces the winner. The title reads **Game over** with **"{Name} wins"**, the three winning sets render as three labelled groups of three cards (all face-up, eye badges suppressed), with a subtle card-pop animation (off under reduced motion). The host sees a primary **Return to Lobby** button; everyone sees **Leave Lobby**. Rematch and Main Page are gone. The Tables and Hand remain visible below, with server-bound actions disabled but local Table rearrangement still working.
-* **Players overlay:** accessible from the top bar to the current host only; it closes automatically if host ownership transfers. Rows show name, mono Table count, and host/away badges, and only the viewer's own Hand count. Rules now open from the top bar, not this overlay.
+* **Players overlay:** accessible from the top bar to the current host only; it closes automatically if host ownership transfers. Rows include every player and spectator, with names and role/presence badges only; no Table or Hand counts are displayed. Every non-host row has a 44px actions button. Its anchored 150px menu offers **Make host** and **Kick** with icons; choosing either replaces the menu with a two-button confirmation. Arrow keys navigate menu items; Escape and outside click close the menu and restore focus to its trigger. The per-opponent Table modal uses the same host-only menu for Make host and Kick. Rules open from the top bar, not the Players overlay.
 
 ### 3.4 Rules and Players Overlays
 * **Rules Page:** One shared visual component (`RulesOverlay`) opened from Home's **Rules** button and the in-game top-bar **Rules** control; it looks identical in both places. The header uses a bordered, transparent icon **close** button at least 44px square, and Escape also closes it. Content is visual-first and text-last — roughly 100 words of copy excluding card faces, with every caption eight words or fewer and no paragraphs. Sections, in order: **Goal** (a mini 3×3 Table whose rows are visually grouped as three sets of three, caption “Build 3 sets of 3 on your Table.”); **Valid sets**, the centrepiece — one panel per valid pattern (**Same colour**, **Same number**, **Same shape**, and the **TEAL wild** example), each drawn with real card components at the `rules` size, a text chip naming the shared trait, and a one-time pulse mark, all behind `prefers-reduced-motion`; **Card types** (each named above its card — Normal / Teal Wild / Action — with mono count chips `175` / `3` / `40`); **Action cards** (all four real action cards, each with a caption of six words or fewer and an APPEAL-eligibility badge, with the action name shown once on the card face and never repeated in the caption); **Your turn** (four icon steps Draw → Play → Act → End with three-word captions, plus the mono line `60s per turn`); **Hidden vs revealed** (a revealed card with its eye badge beside a face-down card back); and **Quick facts** chips, including the corrected rule that *all* unused Action cards stay in Hand until played. Two columns on wide screens and one on mobile; example cards are static and non-interactive, carry no eye badge or selection outline (the eye badge appears only in the Hidden-vs-revealed example), and never list colours or hex codes. The shared-trait mark is never colour-only, and each example carries an `aria-label` describing it in words. The former red-✕ **Nothing matches** counter-example has been removed, leaving only the four valid patterns.
-* **Players Page:** Summary list showing name, **Table count**, only the viewer's own Hand count, and host status, with a close icon to return. The overlay is host-only and closes if host ownership transfers.
+* **Players Page:** Summary list showing names and role/presence badges, with a close icon to return. No Table or Hand counts are displayed. The overlay is host-only and closes if host ownership transfers. Non-host rows, including spectators, can be made host or kicked through the shared two-step actions menu.
 
 ---
 
@@ -152,7 +153,8 @@ After the winner and winning sets are shown, **Return to Lobby** opens the same 
 5. Visual feedback: Targetable cards/slots highlighted with white outline and yellow glow indicator.
 6. Confirmation: Selection immediately submits the action to the server, which opens the Interrupt Phase if the action is eligible for appeal. Cancel button available to back out before confirming.
 7. A stolen card keeps its Revealed/Concealed state after moving to the new owner's Table.
-8. **Presentation:** targeting stays on the live board rather than behind a blocking modal. Selecting a CONCEAL/STEAL/REVEAL card shows a slim, non-blocking step indicator above the Table — **"1 Choose player → 2 Choose card"** — with a visible **Cancel**; targetable cards get the white-outline + yellow-glow treatment from 2.3 and illegal ones are dimmed. The board is deliberately *not* covered, because local Table rearrangement must keep working during an action flow (it never contacts the server). A separate per-opponent modal (opened from the opponents rail) is used for reading an opponent's Table.
+8. **Targeted-card cue:** the target's own Table highlights the target by card ID with the single per-background selection ring and a centered white **Targeted** chip; both clear when the interrupt resolves. For CONCEAL, the actor's public revealed card is highlighted on the actor's and other players' boards. No concealed identity is exposed to the actor, an uninvolved player, or a spectator.
+9. **Presentation:** targeting stays on the live board rather than behind a blocking modal. Selecting a CONCEAL/STEAL/REVEAL card shows a slim, non-blocking step indicator above the Table — **"1 Choose player → 2 Choose card"** — with a visible **Cancel**; targetable cards get the white-outline + yellow-glow treatment from 2.3 and illegal ones are dimmed. The board is deliberately *not* covered, because local Table rearrangement must keep working during an action flow (it never contacts the server). A separate per-opponent modal (opened from the opponents rail) is used for reading an opponent's Table.
 
 ### 4.3 Interrupt / Appeal Flow
 1. When CONCEAL, STEAL, or REVEAL is played, the server opens an interrupt window for **30 seconds**.
@@ -164,18 +166,24 @@ After the winner and winning sets are shown, **Return to Lobby** opens the same 
 5. Clicking **Pass** closes only that player's own notice early — it has no effect on other eligible players still deciding.
 6. If nobody plays APPEAL before the interrupt's `endsAt` deadline, all notices close and the action resolves normally.
 7. Game returns to MAIN phase once resolved.
-8. **Presentation (4.3):** the prompt is a compact, non-modal card in the shared top notice stack under the top bar: the APPEAL card art at `xs`, a 30-second ring countdown with mono seconds, and ≥ 44px **APPEAL** / **Pass** buttons. It never blocks the rest of the board. As specified in 4.5, while paused the buttons are disabled and relabelled **APPEAL (Paused)** / **Pass (Paused)**. Everyone else sees only the same small, non-blocking "Waiting on a decision…" notice, so who holds APPEAL is never revealed.
+8. **Presentation:** the prompt is a single-row, non-modal panel in the shared top notice stack under the top bar (`z-30` below the bar's `z-40`). Its wrapper ignores pointer events and the opaque `#141414` panel re-enables them, so the board remains usable. The centered panel is at most 600px wide, with a 2px white border, 16px radius, and 14px × 16px padding. It contains, left-to-right, the targeted `sm` card (64×90px) with a 3px white ring; **Play APPEAL?** and its action-specific explanation; one 56px ring countdown with a 4px stroke and JetBrains Mono seconds; and vertically stacked 96px **APPEAL** / **Pass** buttons, each at least 44px tall. The prompt does not overlap the turn banner's text. While paused, the buttons are disabled and relabelled **APPEAL (Paused)** / **Pass (Paused)**, and the ring freezes. Everyone else sees the same opaque panel with "Waiting on a decision…" and mono seconds but no buttons or information about the target or APPEAL holders.
 9. Short interrupt results (for example "STEAL was appealed") appear for five seconds in the turn banner, keyed by `resolvedAt` and suppressed after a reload/reconnect.
 
-### 4.4 Turn Transitions
+### 4.4 Your Turn Popup
+* At the start of each turn, including turn 1, the active player sees a non-modal **Your turn** panel for exactly five seconds. It appears and disappears instantly with no animation; it is centered under the top bar in its own `z-30` fixed region. The panel is 300px wide (max viewport width minus 24px), `#141414`, white 2px border, 16px radius and padding, with centered 34px medium text.
+* Above the text is an `aria-hidden` row of three 24×34px cards in Rose, Teal and Periwinkle with 6px gaps and 8px below. There is no subtitle or bottom rule.
+* A transparent 44px square **X** button in the top-right (accessible label **Dismiss**) and Escape dismiss it. The wrapper ignores pointer events; the panel re-enables them. It is not modal and adds no screen-reader announcement; the existing turn announcement remains the single source.
+* The popup is keyed by turn number and room/player in `sessionStorage`, so reloads/reconnects never re-show it during that turn. It does not start while paused; a pause freezes the remaining duration. An open appeal hides it for the rest of that turn, so the two notices never stack.
+
+### 4.5 Turn Transitions
 * Smooth visual transition between phases.
 * Clear indicator of whether it is **your** turn or another player's turn; never rely on names alone to identify the active player. If legacy room data contains duplicate names, explicitly indicate that the active player is another account with that name.
 * Automatic draw at the start of each active turn.
-* Game clients heartbeat every 15 seconds. A player disconnected for 60 seconds is marked away; their current turn and any future turns are skipped. A seat is never forfeited — it is held until the game ends. Seat recovery uses a host-approved request by a unique name, with spectator fallback on decline/timeout.
+* There is no client heartbeat. The Worker starts a 60-second away deadline when a WebSocket close/error marks a player disconnected; the Durable Object alarm marks them away and skips their current/future turns. A throttled tab whose socket remains open is not detected as disconnected. A seat is never forfeited — it is held until the game ends. Seat recovery uses a host-approved request by a unique name, with spectator fallback on decline/timeout.
 * Deck-shuffle feedback when cards return to the draw deck.
 * Every server-bound action immediately shows a pending state (for example, “Submitting move…”), prevents duplicate submission of that action, and then shows confirmation when accepted or a clear error if rejected. When an action is waiting on another player or a server timer, explain that wait separately from request submission.
 
-### 4.5 Pause & Resume
+### 4.6 Pause & Resume
 1. The host sees a **Pause** control in the turn-status area during play. Activating it sends a `pause` intent; the server is authoritative about whether it is allowed.
 2. While paused, every player and spectator sees a **Game paused by host** banner. The host's control changes to **Resume**; non-hosts never see Pause or Resume.
 3. Countdowns stop ticking and display their frozen values (e.g. "Paused · 30s frozen", or "timer frozen" when the frozen value is unknown). The phase label reads "Paused".
@@ -223,14 +231,16 @@ The board is driven by the breakpoint `md` (768px): below it the layout is the p
 | Pending / Confirmed / Failed Server Action Feedback | ✅ Implemented (pending shown while awaiting the server, duplicate submits blocked, then confirmed or a clear error) |
 | Hand/Table Move Pending Feedback | ✅ Implemented (Hand↔Table moves show pending, block duplicates, then confirm or surface the server error) |
 | Configurable Turn Timer (15–180 s) | ✅ Implemented (host sets it in the lobby; default 60 s) |
-| Hidden Opponent Hand Counts | ✅ Implemented (only the viewer's own hand count is shown) |
+| Hidden Opponent Hand Contents | ✅ Implemented (only the viewer's own cards are visible; no Table or Hand counts are rendered) |
+| In-game Table and Hand counts | ✅ Removed from the board, opponents rail, and Players overlay; `Deck n` remains |
 | Game Over Winning Partition | ✅ Implemented (the engine's three validated sets render as the Game Over grouping) |
 | Game Over placement and exit | ✅ Implemented (top of board, scroll/focus/announcement, timer hidden, host **Return to Lobby**, everyone **Leave Lobby**, no Rematch) |
 | Card Glow Effect / Revealed Eye Icon | ✅ Implemented (single per-background selection ring — teal on white/Periwinkle cards, white elsewhere; dark eye badge, hidden on Game Over) |
 | Home Wrong-Code Flow (exists probe + atomic create-with-code) | ✅ Implemented |
 | Lobby "Room not found" vs "Reconnecting…" | ✅ Implemented |
 | Host Pause / Resume (frozen timers, disabled controls) | ✅ Implemented |
-| Hamburger Menu (Rules, Players, leave/kick) | ✅ Implemented (top-bar **Players** overlay is host-only; **Rules** opens from the top bar for everyone; per-opponent modal carries the host-only Kick) |
+| Host transfer and Players actions | ✅ Implemented (host-only transfer to connected players or spectators; row menus offer Make host / Kick with two-step confirmation; prior host keeps their seat and loses host controls) |
+| Players overlay and host management menus | ✅ Implemented (host-only overlay lists players and spectators without counts; per-row and per-opponent menus provide Make host / Kick) |
 | Shared top notice stack | ✅ Implemented (host rejoin requests, appeal prompt, and waiting notice; fixed under the top bar, never covering its controls) |
 | Role segmented control | ✅ Implemented (ARIA radiogroup, arrow-key navigation, ≥44px, current role is a no-op) |
 | Turn timer slider + numeric input | ✅ Implemented (15–180 s, default 60, commit on release/Enter/blur, inline rejection error) |
@@ -239,7 +249,10 @@ The board is driven by the breakpoint `md` (768px): below it the layout is the p
 | Fonts (Outfit + JetBrains Mono, tabular figures) | ✅ Implemented via `@theme` tokens with system fallbacks |
 | Lobby Redesign (code hero, players/spectators, inline name edit, role switch, host controls, waiting state) | ✅ Implemented |
 | Opponents Rail + per-opponent Table modal | ✅ Implemented (mini `xs` Tables; no opponent set progress is shown) |
-| Appeal prompt in the notice stack (card art + 30s ring + APPEAL/Pass) | ✅ Implemented (non-modal; paused labels per 4.5) |
+| Targeted-card private view and highlight | ✅ Implemented (`you.interruptCard` is filtered by role; the target sees a card-ID highlight and non-colour-only Targeted chip) |
+| Appeal prompt in the notice stack | ✅ Implemented (opaque single-row panel, target card, one 30s ring, APPEAL/Pass; paused labels per 4.6) |
+| Your turn popup | ✅ Implemented (active player only, instant five-second display, dismissible, pause-aware and suppressed for the same turn after reload) |
+| End turn button variant | ✅ Implemented (rose fill with black text while enabled; grey disabled state; used only for End turn) |
 | Motion vocabulary (draw, shuffle, steal, banner crossfade, active pulse) | ✅ Implemented behind `motion-safe` + `prefers-reduced-motion` |
 | Accessibility pass (aria-live announcements, focus trap + restore, Escape) | ✅ Implemented; full assistive-technology audit remains |
 | Deck/discard presentation | ✅ Pile graphics removed; discards recycled directly into the deck |
@@ -247,6 +260,7 @@ The board is driven by the breakpoint `md` (768px): below it the layout is the p
 | Action Targeting UI (revealed-direct / concealed-blind) | ✅ Implemented |
 | Interrupt/Appeal Pop-up (multi-responder, 30s) | ✅ Implemented |
 | Home View Rules Button | ✅ Implemented (close button styled as a bordered icon control) |
+| Lobby Rules Button | ✅ Implemented (ghost button beside Lobby; shared Rules overlay, Escape close and focus restore; icon-only label on narrow screens) |
 | Visual Rules overlay with set examples | ✅ Implemented (one shared `RulesOverlay` for Home and in-game; static `rules`-size set/action examples, ≤8-word captions, no colour-only cues) |
 | Lobby/Home Views | ✅ Implemented |
 | Mobile Responsive | ✅ Responsive layout and tap targets implemented; manual device matrix remains |
