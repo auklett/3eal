@@ -155,7 +155,11 @@ export const ViewSchema = z.discriminatedUnion('role', [
     role: z.literal('spectator'),
     data: PublicViewSchema.extend({
       // Spectators can be appointed host, so they need their own participant ID.
-      you: z.object({ id: playerIdSchema }).strict()
+      you: z.object({
+        id: playerIdSchema,
+        // Spectators never receive private targeted-card information.
+        interruptCard: z.null().default(null)
+      }).strict()
     }).strict()
   }).strict()
 ]);
@@ -188,5 +192,5 @@ export type PlayerView = PublicView & {
 };
 export type View =
   | { role: 'player'; data: PlayerView }
-  | { role: 'spectator'; data: PublicView & { you: { id: string } } };
+  | { role: 'spectator'; data: PublicView & { you: { id: string; interruptCard: null } } };
 export type { Card, InterruptAction };

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { addParticipant, createRoom, reduceRoom, type RoomState } from '@3eal/engine';
+import {
+  addParticipant,
+  createRoom,
+  reduceRoom,
+  requestRejoin,
+  transferHostTo,
+  type RoomState
+} from '@3eal/engine';
 import { playerView, spectatorView } from './views';
 
 function startedRoom(): RoomState {
@@ -19,6 +26,35 @@ function startedRoom(): RoomState {
   );
   if ('error' in joined) throw new Error(joined.error);
   const started = reduceRoom(joined.state, room.hostId, { t: 'start' }, 1000);
+  if ('error' in started) throw new Error(started.error);
+  return started.state;
+}
+
+function startedThreePlayerRoom(): RoomState {
+  const room = createRoom(
+    'ABCD',
+    '00000000-0000-4000-8000-000000000001',
+    '10000000-0000-4000-8000-000000000001',
+    'Host',
+    'secret-seed'
+  );
+  const guest = addParticipant(
+    room,
+    '00000000-0000-4000-8000-000000000002',
+    'Guest',
+    'player',
+    '10000000-0000-4000-8000-000000000002'
+  );
+  if ('error' in guest) throw new Error(guest.error);
+  const third = addParticipant(
+    guest.state,
+    '00000000-0000-4000-8000-000000000003',
+    'Third',
+    'player',
+    '10000000-0000-4000-8000-000000000003'
+  );
+  if ('error' in third) throw new Error(third.error);
+  const started = reduceRoom(third.state, room.hostId, { t: 'start' }, 1000);
   if ('error' in started) throw new Error(started.error);
   return started.state;
 }
@@ -56,7 +92,10 @@ describe('filtered room views', () => {
     const { you: _private, ...playerPublic } = playerSnapshot.data;
     const { you: _spectatorPrivate, ...spectatorPublic } = spectatorSnapshot.data;
     expect(spectatorPublic).toEqual(playerPublic);
-    expect(spectatorSnapshot.data.you).toEqual({ id: '20000000-0000-4000-8000-000000000001' });
+    expect(spectatorSnapshot.data.you).toEqual({
+      id: '20000000-0000-4000-8000-000000000001',
+      interruptCard: null
+    });
     expect(JSON.stringify(spectatorSnapshot)).not.toContain('"hand":');
     expect(JSON.stringify(spectatorSnapshot)).not.toContain('secret-seed');
     expect(JSON.stringify(spectatorSnapshot)).not.toContain('10000000-0000-4000-8000-000000000001');
@@ -91,8 +130,11 @@ describe('filtered room views', () => {
     const privateOwner = playerView(room, owner.id);
     if (privateOwner.role !== 'player') throw new Error('Expected player view');
     expect(Object.keys(privateOwner.data.you.concealedOwn)).toEqual([concealedId]);
-    expect(spectator.data.you).toEqual({ id: '20000000-0000-4000-8000-000000000001' });
-    expect(Object.keys(spectator.data.you)).toEqual(['id']);
+    expect(spectator.data.you).toEqual({
+      id: '20000000-0000-4000-8000-000000000001',
+      interruptCard: null
+    });
+    expect(Object.keys(spectator.data.you)).toEqual(['id', 'interruptCard']);
   });
 
   it('reveals all cards to spectators only after the game has ended', () => {
@@ -148,8 +190,73 @@ describe('filtered room views', () => {
     expect(actorView.data.you.interruptCard).toBeNull();
 
     const spectator = spectatorView(opened.state, '20000000-0000-4000-8000-000000000001');
-    expect(JSON.stringify(spectator)).not.toContain('"interruptCard"');
+    expect(spectator.data.you.interruptCard).toBeNull();
     expect(JSON.stringify(actorView)).not.toContain(`"interruptCard":{"cardId":"${stolen.id}"`);
+  });
+
+  it('filters a blind STEAL card to the target, returning null to the actor, others, and spectators', () => {
+    const room = startedThreePlayerRoom();
+    const actor = room.players.find((player) => player.id === room.activePlayerId);
+    const target = room.players.find((player) => player.id !== actor?.id);
+    const uninvolved = room.players.find((player) => player.id !== actor?.id && player.id !== target?.id);
+    if (!actor || !target || !uninvolved) throw new Error('Expected three players');
+
+    target.table[0].revealed = false;
+    const stolen = target.table[0].card;
+    actor.hand.push({ id: 'blind-steal', kind: 'action', action: 'STEAL' });
+    const opened = reduceRoom(room, actor.id, {
+      t: 'action',
+      cardId: 'blind-steal',
+      kind: 'STEAL',
+      targetId: target.id,
+      slot: 0
+    }, 10_000);
+    if ('error' in opened) throw new Error(opened.error);
+
+    const targetView = playerView(opened.state, target.id);
+    const actorView = playerView(opened.state, actor.id);
+    const uninvolvedView = playerView(opened.state, uninvolved.id);
+    const spectator = spectatorView(opened.state, '20000000-0000-4000-8000-000000000001');
+    if (targetView.role !== 'player' || actorView.role !== 'player' || uninvolvedView.role !== 'player') {
+      throw new Error('Expected player views');
+    }
+
+    expect(targetView.data.you.interruptCard).toEqual({ cardId: stolen.id, card: stolen, revealed: false });
+    expect(actorView.data.you.interruptCard).toBeNull();
+    expect(uninvolvedView.data.you.interruptCard).toBeNull();
+    expect(spectator.data.you.interruptCard).toBeNull();
+    for (const view of [actorView, uninvolvedView, spectator]) {
+      expect(view.data.players.find((player) => player.id === target.id)?.table[0])
+        .toEqual({ state: 'concealed', cardId: stolen.id });
+    }
+  });
+
+  it('keeps pending rejoin requests private to the new host after a transfer', () => {
+    const room = startedRoom();
+    const newHost = room.players.find((player) => player.id !== room.hostId);
+    if (!newHost) throw new Error('Expected a second player');
+    const request = requestRejoin(
+      room,
+      '20000000-0000-4000-8000-000000000003',
+      '20000000-0000-4000-8000-000000000001',
+      '20000000-0000-4000-8000-000000000002',
+      newHost.name,
+      10_000
+    );
+    if ('error' in request) throw new Error(request.error);
+    const transferred = transferHostTo(request.state, room.hostId, newHost.id);
+    if ('error' in transferred) throw new Error(transferred.error);
+
+    const newHostView = playerView(transferred.state, newHost.id);
+    const oldHostView = playerView(transferred.state, room.hostId);
+    if (newHostView.role !== 'player' || oldHostView.role !== 'player') {
+      throw new Error('Expected player views');
+    }
+    expect(newHostView.data.you.rejoinRequests).toEqual([{
+      requestId: '20000000-0000-4000-8000-000000000003',
+      name: newHost.name
+    }]);
+    expect(oldHostView.data.you.rejoinRequests).toEqual([]);
   });
 
   it('shows the CONCEAL card to eligible responders but not to its actor', () => {

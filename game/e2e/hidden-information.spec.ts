@@ -95,7 +95,7 @@ function makeViews(aliceConcealed: Set<string> = new Set()): { alice: View; bob:
         }
       }
     },
-    spectator: { role: 'spectator', data: { ...base, you: { id: viewerId } } }
+    spectator: { role: 'spectator', data: { ...base, you: { id: viewerId, interruptCard: null } } }
   };
 }
 

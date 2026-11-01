@@ -97,7 +97,7 @@ export function spectatorView(room: RoomState, viewerId: string): View {
       ...publicView(room),
       // Spectators can also be appointed host, so they need to know their own
       // participant ID without seeing the host-only controls.
-      you: { id: viewerId }
+      you: { id: viewerId, interruptCard: null }
     }
   };
 }
