@@ -364,6 +364,7 @@ export class GameRoom extends DurableObject<Env> {
     if (!attachment.playerId) return this.sendError(webSocket, 'not_in_room', 'You must be in the room to return to the lobby');
     // The Worker owns the fresh seed so the next game is a brand-new shuffle.
     const result = returnToLobby(this.room, attachment.playerId, crypto.randomUUID());
+    // Engine returns new lobby state with only connected, non-away, non-left, non-kicked members
     if ('error' in result) return this.sendError(webSocket, 'rejected', result.error);
     this.room = result.state;
     this.closeRemovedSockets();
@@ -411,7 +412,9 @@ export class GameRoom extends DurableObject<Env> {
         continue;
       }
       if (attachment.playerId && !remaining.has(attachment.playerId)) {
-        socket.close(4004, 'left');
+        // Dropped member: close with 4001 so the client rotates its session ID
+        // and rejoins as a new member under normal lobby join rules.
+        socket.close(4001, 'reconnected');
       }
     }
   }
@@ -420,20 +423,17 @@ export class GameRoom extends DurableObject<Env> {
     await this.ready;
     if (!this.room) return;
     const attachment = webSocket.deserializeAttachment() as Attachment;
-    if (!attachment.playerId) return;
-    // A page reload or a client-side handoff (returning to the lobby) closes
-    // the old socket just before the replacement connects. Yielding briefly
-    // lets the new socket claim the seat first, so a host is not mistaken for
-    // having left and ownership is not handed to somebody else.
-    await new Promise((resolve) => setTimeout(resolve, 750));
-    if (!this.room) return;
+    const playerId = attachment.playerId;
+    if (!playerId) return;
+    // A page reload can close the old socket just before its replacement joins.
+    // Do not mark the member away while another tagged room socket owns the seat.
     const hasOtherConnection = this.ctx.getWebSockets('room').some((socket) => {
-      if (socket === webSocket) return false;
+      if (socket === webSocket || socket.readyState !== WebSocket.OPEN) return false;
       const other = socket.deserializeAttachment() as Attachment;
-      return other.playerId === attachment.playerId && (other.role === 'player' || other.role === 'spectator');
+      return other.playerId === playerId && (other.role === 'player' || other.role === 'spectator');
     });
     if (hasOtherConnection) return;
-    this.room = setParticipantConnected(this.room, attachment.playerId, false, Date.now());
+    this.room = setParticipantConnected(this.room, playerId, false, Date.now());
     await this.commit();
   }
 
@@ -476,6 +476,7 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   private send(webSocket: WebSocket, message: ServerMsg): void {
+    if (webSocket.readyState !== WebSocket.OPEN) return;
     webSocket.send(JSON.stringify(message));
   }
 
