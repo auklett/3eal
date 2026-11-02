@@ -77,6 +77,7 @@ function makeViews(aliceConcealed: Set<string> = new Set()): { alice: View; bob:
           concealedOwn: concealedOwn(aliceStart, aliceConcealed),
           interruptCard: null,
           stolenToHandAt: null,
+          actionRefillCount: 0,
           rejoinRequests: []
         }
       }
@@ -91,6 +92,7 @@ function makeViews(aliceConcealed: Set<string> = new Set()): { alice: View; bob:
           concealedOwn: {},
           interruptCard: null,
           stolenToHandAt: null,
+          actionRefillCount: 0,
           rejoinRequests: []
         }
       }
