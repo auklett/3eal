@@ -50,6 +50,7 @@ export interface ViewOptions {
   extraPlayers?: number;
   interruptCard?: { cardId: string; card: Card; revealed: boolean } | null;
   stolenToHandAt?: number | null;
+  actionRefillCount?: number;
   viewerId?: string;
 }
 
@@ -101,6 +102,7 @@ export function playerView(options: ViewOptions = {}): View {
       concealedOwn: Object.fromEntries(aliceCards.map((card) => [card.id, card])),
       interruptCard: options.interruptCard ?? null,
       stolenToHandAt: options.stolenToHandAt ?? null,
+      actionRefillCount: options.actionRefillCount ?? 0,
       rejoinRequests: viewerId === (options.hostId ?? ALICE) ? options.rejoinRequests ?? [] : []
     }
   };

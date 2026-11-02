@@ -143,6 +143,7 @@ export const ViewSchema = z.discriminatedUnion('role', [
         interruptCard: PrivateInterruptCardSchema.nullable().default(null),
         // Private: resolution timestamp when this player's STEAL went to Hand.
         stolenToHandAt: z.number().int().nullable().default(null),
+        actionRefillCount: z.number().int().nonnegative().default(0),
         // Host-only authoritative request list; empty for every other player.
         rejoinRequests: z.array(z.object({
           requestId: z.string().uuid(),
@@ -187,6 +188,7 @@ export type PlayerView = PublicView & {
     concealedOwn: Record<string, TableCard>;
     interruptCard: { cardId: string; card: TableCard; revealed: boolean } | null;
     stolenToHandAt: number | null;
+    actionRefillCount: number;
     rejoinRequests: Array<{ requestId: string; name: string }>;
   };
 };

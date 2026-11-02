@@ -58,7 +58,8 @@ test('the STEAL actor sees a transient note when the stolen card went to their H
   await mockRoomSocket(page, 'ABCD', playerView({
     activePlayerId: ALICE,
     lastInterruptResult: { kind: 'STEAL', outcome: 'resolved', resolvedAt: 12_345 },
-    stolenToHandAt: 12_345
+    stolenToHandAt: 12_345,
+    actionRefillCount: 0
   }));
   await page.goto('/game/ABCD');
   await waitForOwnTable(page, /Your Table/);

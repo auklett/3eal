@@ -122,6 +122,7 @@ export function playerView(room: RoomState, playerId: string): View {
         stolenToHandAt: room.lastInterruptResult?.stolenToHandBy === player.id
           ? room.lastInterruptResult.resolvedAt
           : null,
+        actionRefillCount: room.activePlayerId === player.id ? room.turnRefillCount : 0,
         rejoinRequests: player.id === room.hostId
           ? room.rejoinRequests.map((request) => ({ requestId: request.id, name: request.name }))
           : []

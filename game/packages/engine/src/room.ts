@@ -96,6 +96,7 @@ export type RoomState = {
   randomCounter: number;
   rejoinRequests: RejoinRequest[];
   skipAfterInterrupt: boolean;
+  turnRefillCount: number;
 };
 
 export type RoomIntent =
@@ -220,6 +221,21 @@ function beginTurn(state: RoomState, playerId: string, now: number): void {
   state.turnEndsAt = now + state.turnDurationSeconds * 1000;
   // A result notice belongs to the turn it resolved in; never carry it forward.
   state.lastInterruptResult = null;
+  // Refill: a player with no Action cards gets 3 random Action cards.
+  state.turnRefillCount = 0;
+  const active = state.activePlayerId ? getPlayer(state, state.activePlayerId) : undefined;
+  const hasAction = active ? active.hand.some((card) => card.kind === 'action') : true;
+  if (active && !hasAction) {
+    const picked: Card[] = [];
+    const remaining: Card[] = [];
+    for (const card of state.deck) {
+      if (card.kind === 'action' && picked.length < 3) picked.push(card);
+      else remaining.push(card);
+    }
+    state.deck = remaining;
+    active.hand.push(...picked);
+    state.turnRefillCount = picked.length;
+  }
   drawForTurn(state);
 }
 
@@ -374,7 +390,8 @@ export function createRoom(roomCode: string, hostId: string, hostSessionId: stri
     randomSeed,
     randomCounter: 0,
     rejoinRequests: [],
-    skipAfterInterrupt: false
+    skipAfterInterrupt: false,
+    turnRefillCount: 0
   };
 }
 

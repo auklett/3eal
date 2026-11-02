@@ -99,5 +99,6 @@ export const persistedRoomSchema = z.object({
     name: z.string().trim().min(1).max(24),
     expiresAt: z.number().int()
   }).strict()),
-  skipAfterInterrupt: z.boolean()
+  skipAfterInterrupt: z.boolean(),
+  turnRefillCount: z.number().int().nonnegative().default(0)
 }).strict();
