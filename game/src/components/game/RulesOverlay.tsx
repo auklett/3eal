@@ -1,4 +1,5 @@
 import { useRef, type ReactNode, type SVGProps } from 'react';
+import { COLORS, NUMBERS, SHAPES } from '@3eal/engine';
 import Panel from '../ui/Panel';
 import Chip from '../ui/Chip';
 import Badge from '../ui/Badge';
@@ -78,17 +79,19 @@ function StepIcon({ name }: { name: 'draw' | 'play' | 'act' | 'end' }) {
   return <svg {...common}><path d="M5 12l4 4L19 6" /></svg>;
 }
 
+const NORMAL_CAPTION = `${COLORS.length} colors, ${NUMBERS.length} numbers, ${SHAPES.length} shapes.`;
+
 const TYPES = [
-  { card: typeExamples[0], name: 'Normal', count: '175', caption: 'Five colors, numbers and shapes.' },
+  { card: typeExamples[0], name: 'Normal', count: '175', caption: NORMAL_CAPTION },
   { card: typeExamples[1], name: 'Teal Wild', count: '3', caption: 'Always Teal. Any number or shape.' },
   { card: typeExamples[2], name: 'Action', count: '40', caption: 'Play them during a turn.' }
 ];
 
 const ACTIONS = [
-  { card: actionExamples[0], caption: 'Hide one of your revealed cards.', badge: 'Anyone can APPEAL' },
+  { card: actionExamples[0], caption: 'Hide one of your revealed cards.', badge: 'Any opponent can APPEAL' },
   { card: actionExamples[1], caption: 'Take a card from an opponent.', badge: 'Target can APPEAL' },
   { card: actionExamples[2], caption: "Flip an opponent's hidden card.", badge: 'Target can APPEAL' },
-  { card: actionExamples[3], caption: 'Cancel CONCEAL, STEAL or REVEAL.', badge: "Can't be appealed" }
+  { card: actionExamples[3], caption: 'Cancel an action or an appeal.', badge: 'The player it counters' }
 ];
 
 const STEPS = [

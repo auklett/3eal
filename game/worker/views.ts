@@ -1,9 +1,10 @@
 import {
+  eligibleResponders,
   publicInterrupt,
+  type Card,
   type InterruptState,
   type RoomPlayer,
-  type RoomState,
-  type TableCard
+  type RoomState
 } from '@3eal/engine';
 import type { PublicPlayer, PublicView, View } from '../src/shared/protocol';
 
@@ -43,7 +44,9 @@ export function publicView(room: RoomState): PublicView {
       ? {
           kind: room.lastInterruptResult.kind,
           outcome: room.lastInterruptResult.outcome,
-          resolvedAt: room.lastInterruptResult.resolvedAt
+          resolvedAt: room.lastInterruptResult.resolvedAt,
+          appealDepth: room.lastInterruptResult.appealDepth,
+          appealedBy: room.lastInterruptResult.appealedBy
         }
       : null,
     deckCount: room.deck.length,
@@ -66,17 +69,28 @@ export function publicView(room: RoomState): PublicView {
 }
 
 /**
- * The targeted card is private. A STEAL or REVEAL reveals it to the owner of
- * the card only; a CONCEAL reveals it to the players who may appeal it. The
- * actor and every other viewer receive `null`, so a concealed identity never
- * travels to anyone who should not already know it.
+ * The targeted card is private. On the first link, a STEAL or REVEAL reveals it
+ * to the owner of the card only; a CONCEAL reveals it to the non-actor players
+ * who may appeal it. The actor and every other viewer receive `null`.
+ *
+ * On later links, only the one player whose action/appeal was just countered
+ * sees the APPEAL face played against them. That card is public once played,
+ * so this does not reveal who holds an unplayed APPEAL.
  */
 function viewerInterruptCard(
   room: RoomState,
   viewerId: string
-): { cardId: string; card: TableCard; revealed: boolean } | null {
+): { cardId: string; card: Card; revealed: boolean } | null {
   const interrupt: InterruptState | undefined = room.pendingAction?.interrupt;
   if (!interrupt) return null;
+
+  if (interrupt.appeals.length > 0) {
+    if (!eligibleResponders(interrupt).includes(viewerId)) return null;
+    const playedAppeal = room.pendingAction?.appealCards.at(-1);
+    if (!playedAppeal || playedAppeal.kind !== 'action' || playedAppeal.action !== 'APPEAL') return null;
+    return { cardId: playedAppeal.id, card: playedAppeal, revealed: false };
+  }
+
   if (interrupt.kind === 'CONCEAL') {
     // The card is the actor's own revealed Table card, so every non-actor may
     // be shown it. Filtering by responderIds would reveal who holds APPEAL.

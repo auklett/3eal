@@ -26,6 +26,10 @@ export interface InterruptFixture {
   targetId: string;
   targetCardId: string;
   endsAt: number | null;
+  /** Number of appeals already played (0 = first link). */
+  appealDepth?: number;
+  /** Players who have already played an APPEAL, oldest first. */
+  appealPlayers?: string[];
 }
 
 export interface ViewOptions {
@@ -44,7 +48,13 @@ export interface ViewOptions {
   turnNumber?: number;
   turnDurationSeconds?: number;
   rejoinRequests?: Array<{ requestId: string; name: string }>;
-  lastInterruptResult?: { kind: 'CONCEAL' | 'STEAL' | 'REVEAL'; outcome: 'appealed' | 'resolved' | 'expired'; resolvedAt: number } | null;
+  lastInterruptResult?: {
+    kind: 'CONCEAL' | 'STEAL' | 'REVEAL';
+    outcome: 'appealed' | 'resolved' | 'expired';
+    resolvedAt: number;
+    appealDepth?: number;
+    appealedBy?: string | null;
+  } | null;
   awayIds?: string[];
   spectators?: Array<{ id: string; name: string; connected: boolean }>;
   extraPlayers?: number;
@@ -91,8 +101,12 @@ export function playerView(options: ViewOptions = {}): View {
     turnNumber: options.turnNumber ?? 1,
     paused: options.paused ?? false,
     pauseRemaining: options.pauseRemaining ?? null,
-    interrupt: options.interrupt ?? null,
-    lastInterruptResult: options.lastInterruptResult ?? null,
+    interrupt: options.interrupt
+      ? { appealDepth: 0, appealPlayers: [], ...options.interrupt }
+      : null,
+    lastInterruptResult: options.lastInterruptResult
+      ? { appealDepth: 0, appealedBy: null, ...options.lastInterruptResult }
+      : null,
     deckCount: 200,
     winnerId: options.winnerId === undefined ? (phase === 'finished' ? ALICE : null) : options.winnerId,
     winningSets: options.winningSets ?? null,

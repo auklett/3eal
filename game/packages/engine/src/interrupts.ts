@@ -5,6 +5,7 @@ import type {
   InterruptResponse,
   InterruptState
 } from './types';
+import { eligibleResponders } from './types';
 
 export const MAX_INTERRUPT_DURATION_MS = 30_000;
 
@@ -33,6 +34,7 @@ export function openInterrupt(
     interrupt: {
       ...action,
       endsAt: now + MAX_INTERRUPT_DURATION_MS,
+      appeals: [],
       responderIds,
       passedIds: []
     }
@@ -43,25 +45,37 @@ export function respondToInterrupt(
   interrupt: InterruptState,
   playerId: string,
   response: 'appeal' | 'pass',
-  now: number
+  now: number,
+  cardId?: string
 ): InterruptResponse {
-  if (interrupt.endsAt !== null && now >= interrupt.endsAt) return { status: 'resolved', reason: 'all-passed' };
-  if (!interrupt.responderIds.includes(playerId)) {
+  if (interrupt.endsAt !== null && now >= interrupt.endsAt) return { status: 'resolved', reason: 'expired' };
+  const eligible = eligibleResponders(interrupt);
+  if (!eligible.includes(playerId)) {
     throw new Error('Player is not eligible to respond to this interrupt');
   }
-  if (interrupt.passedIds.includes(playerId)) {
+  if (interrupt.appeals.length === 0 && interrupt.passedIds.includes(playerId)) {
     throw new Error('Player has already passed this interrupt');
   }
-  if (response === 'appeal') return { status: 'resolved', reason: 'appealed', appealedBy: playerId };
+
+  if (response === 'appeal') {
+    const appeals = [...interrupt.appeals, { playerId, cardId: cardId ?? '' }];
+    return {
+      status: 'open',
+      interrupt: { ...interrupt, appeals, endsAt: now + MAX_INTERRUPT_DURATION_MS }
+    };
+  }
 
   const passedIds = [...interrupt.passedIds, playerId];
-  if (passedIds.length === interrupt.responderIds.length) {
-    return { status: 'resolved', reason: 'all-passed' };
+  if (interrupt.appeals.length === 0) {
+    if (passedIds.length === interrupt.responderIds.length) {
+      return { status: 'resolved', reason: 'all-passed' };
+    }
+    return { status: 'open', interrupt: { ...interrupt, passedIds } };
   }
-  return { status: 'open', interrupt: { ...interrupt, passedIds } };
+  return { status: 'resolved', reason: 'all-passed' };
 }
 
 export function expireInterrupt(interrupt: InterruptState, now: number): InterruptResponse {
   if (interrupt.endsAt === null || now < interrupt.endsAt) return { status: 'open', interrupt };
-  return { status: 'resolved', reason: 'all-passed' };
+  return { status: 'resolved', reason: 'expired' };
 }

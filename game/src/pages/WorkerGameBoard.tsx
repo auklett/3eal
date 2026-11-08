@@ -59,7 +59,7 @@ function toUiCard(card: EngineCard, revealed = false): UiCard {
     CONCEAL: 'Hide a revealed card',
     STEAL: 'Take a card from opponent',
     REVEAL: 'Expose a concealed card',
-    APPEAL: 'Cancel an action card'
+    APPEAL: 'Cancel an action or an appeal'
   };
 
   return {
@@ -179,6 +179,7 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
   const [drag, setDrag] = useState<DragMeta & { x: number; y: number } | null>(null);
   const [dragOver, setDragOver] = useState<DragOver>(null);
   const [pendingMoveKind, setPendingMoveKind] = useState<'place' | 'toHand' | null>(null);
+  const [handDockHeight, setHandDockHeight] = useState(0);
   const compact = useIsCompact();
 
   const layoutRef = useRef<TableLayout>([]);
@@ -188,6 +189,7 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
   const suppressClick = useRef(false);
   const dialogRef = useRef<HTMLElement | null>(null);
   const opponentDialogRef = useRef<HTMLElement | null>(null);
+  const handDockRef = useRef<HTMLElement | null>(null);
   const gameOverHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const announcedKey = useRef<string | null>(null);
   const finishedHandled = useRef(false);
@@ -205,6 +207,39 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
     const timer = window.setInterval(() => setNow(Date.now()), 250);
     return () => window.clearInterval(timer);
   }, []);
+
+  // Measure the fixed mobile Hand dock so the board can reserve exactly enough
+  // bottom space for it. ResizeObserver keeps the value in sync when the dock
+  // expands, collapses, or grows with more cards.
+  useEffect(() => {
+    const node = handDockRef.current;
+    if (!node) return;
+    const measure = () => setHandDockHeight(node.getBoundingClientRect().height);
+    measure();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
+    observer?.observe(node);
+    window.addEventListener('resize', measure);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [view?.role, handOpen, compact]);
+
+  // When selecting a card reveals the contextual Move buttons, make sure the
+  // dock cannot hide them: nudge the page just enough to clear the dock.
+  useEffect(() => {
+    if (!compact) return;
+    const frame = window.requestAnimationFrame(() => {
+      const actions = document.querySelector<HTMLElement>('[data-context-actions]');
+      if (!actions) return;
+      const dockTop = window.innerHeight - (handDockHeight || 288) - 8;
+      const rect = actions.getBoundingClientRect();
+      if (rect.bottom <= dockTop) return;
+      const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      window.scrollBy({ top: rect.bottom - dockTop, behavior: reduced ? 'auto' : 'smooth' });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [compact, selectedHandId, tableSelection, handDockHeight]);
 
   // Only the click replayed by the drag gesture itself is suppressed (see
   // `finish`). Starting any new gesture re-enables clicks, so a real tap right
@@ -242,9 +277,16 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
     view.data.you.stolenToHandAt === lastResult.resolvedAt
   );
   const resultText = lastResult
-    ? stolenWentToHand
-      ? 'The stolen card went to your Hand.'
-      : `${lastResult.kind} ${lastResult.outcome === 'appealed' ? 'was appealed' : lastResult.outcome === 'expired' ? 'expired' : 'resolved'}.`
+    ? (() => {
+        const chainText = lastResult.outcome === 'appealed'
+          ? `${lastResult.kind} was appealed.`
+          : lastResult.outcome === 'expired'
+            ? `${lastResult.kind} expired.`
+            : lastResult.appealDepth > 0
+              ? `${lastResult.kind} went through after ${lastResult.appealDepth === 2 ? 'an appeal was countered' : 'appeals were countered'}.`
+              : `${lastResult.kind} resolved.`;
+        return stolenWentToHand ? `${chainText} The stolen card went to your Hand.` : chainText;
+      })()
     : null;
 
   // Game Over moves to the top of the board when the phase flips. Scroll there,
@@ -392,10 +434,19 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
     ? selectedHand.action
     : null;
   const interrupt = data.interrupt;
+  const interruptDepth = interrupt?.appealDepth ?? 0;
+  const isLaterInterruptLink = interruptDepth > 0;
+  // Depth 0 uses the action's normal targeting rule. After that, only the
+  // player whose action/appeal was just countered may respond: the actor on
+  // odd links, and the previous appealer on even links.
   const isEligible = Boolean(interrupt && self && (
-    interrupt.kind === 'CONCEAL'
-      ? self.id !== interrupt.actorId
-      : self.id === interrupt.targetId
+    interruptDepth === 0
+      ? interrupt.kind === 'CONCEAL'
+        ? self.id !== interrupt.actorId
+        : self.id === interrupt.targetId
+      : interruptDepth % 2 === 1
+        ? self.id === interrupt.actorId
+        : self.id === interrupt.appealPlayers[interruptDepth - 2]
   ));
   const appealCard = hand.find((card) => card.kind === 'action' && card.action === 'APPEAL');
   const interruptCard = view.role === 'player' ? view.data.you.interruptCard : null;
@@ -407,12 +458,20 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
   const interruptActorName = interrupt
     ? data.players.find((player) => player.id === interrupt.actorId)?.name ?? 'A player'
     : '';
+  const lastAppealerName = interrupt && isLaterInterruptLink
+    ? data.players.find((player) => player.id === interrupt.appealPlayers.at(-1))?.name ?? 'A player'
+    : '';
+  const appealPromptTitle = isLaterInterruptLink ? 'Appeal their APPEAL?' : 'Play APPEAL?';
   const interruptBody = interrupt
-    ? interrupt.kind === 'STEAL'
-      ? `${interruptActorName} wants to STEAL this card from you.`
-      : interrupt.kind === 'REVEAL'
-        ? `${interruptActorName} wants to REVEAL this card.`
-        : `${interruptActorName} wants to CONCEAL this card.`
+    ? isLaterInterruptLink
+      ? interruptDepth === 1
+        ? `${lastAppealerName} appealed your ${interrupt.kind}.`
+        : `${lastAppealerName} appealed your APPEAL.`
+      : interrupt.kind === 'STEAL'
+        ? `${interruptActorName} wants to STEAL this card from you.`
+        : interrupt.kind === 'REVEAL'
+          ? `${interruptActorName} wants to REVEAL this card.`
+          : `${interruptActorName} wants to CONCEAL this card.`
     : '';
 
   // Local, presentation-only Table order. Merged from every snapshot keyed by
@@ -668,6 +727,9 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
     }
     const size9 = isOwn ? Math.max(layout.length, slots.length, 9) : Math.max(9, slots.length);
     const gap = size === 'xs' ? 'gap-1' : 'gap-2';
+    // The mini rail Tables must let a horizontal swipe pan the rail. Only the
+    // larger, draggable Tables suppress native touch gestures.
+    const touchClass = size === 'xs' ? '[touch-action:pan-x_pan-y]' : 'touch-none';
     return (
       <div className={`grid w-fit grid-cols-3 ${gap}`}>
         {Array.from({ length: size9 }, (_, index) => {
@@ -705,7 +767,7 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
               aria-label={baseLabel}
               onClick={() => handleSlotClick(playerId, index, slot)}
               onPointerDown={rearrangeReady ? (event) => beginPointer(event, cardId ?? '', 'table', index) : undefined}
-              className={`relative ${tableSlotSize(size)} touch-none rounded-[var(--radius-control)] transition ${canTarget ? 'ring-2 ring-amber-300' : ''} ${isDropTarget ? 'ring-2 ring-teal-300' : ''} ${isDraggingSource ? 'opacity-40' : ''}`}
+              className={`relative ${tableSlotSize(size)} ${touchClass} rounded-[var(--radius-control)] transition ${canTarget ? 'ring-2 ring-amber-300' : ''} ${isDropTarget ? 'ring-2 ring-teal-300' : ''} ${isDraggingSource ? 'opacity-40' : ''}`}
             >
               <CardComponent
                 card={face ?? {
@@ -741,7 +803,7 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
               disabled={disabled}
               aria-label="Empty Table slot"
               onClick={() => handleSlotClick(playerId, index, undefined)}
-              className={`group ${emptySlotSize(size)} touch-none rounded-[var(--radius-control)] border border-dashed border-white/20 transition disabled:cursor-default hover:border-white/40 ${isDropTarget ? 'border-2 border-teal-300' : ''}`}
+              className={`group ${emptySlotSize(size)} ${touchClass} rounded-[var(--radius-control)] border border-dashed border-white/20 transition disabled:cursor-default hover:border-white/40 ${isDropTarget ? 'border-2 border-teal-300' : ''}`}
             >
               {size !== 'xs' && <span aria-hidden="true" className="text-lg text-white/0 transition group-hover:text-white/30">+</span>}
             </button>
@@ -847,8 +909,13 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
                 )}
               </div>
               <div className="min-w-0 flex-1">
-                <p className="text-[17px] font-medium leading-tight text-white">Play APPEAL?</p>
+                <p className="text-[17px] font-medium leading-tight text-white">{appealPromptTitle}</p>
                 <p className="mt-1 text-[13px] leading-snug text-white/70">{interruptBody}</p>
+                {isLaterInterruptLink && (
+                  <p className="mt-1 font-mono text-[11px] tabular-nums text-white/50" data-testid="appeal-chain-depth">
+                    Appeal chain: {interruptDepth}
+                  </p>
+                )}
               </div>
               <AppealRing seconds={interruptSeconds} paused={data.paused} />
               <div className="flex shrink-0 flex-col gap-2">
@@ -899,16 +966,26 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
 
         {interrupt && !showAppealSheet && (
           <div className="mx-auto w-full max-w-[600px] rounded-2xl border-2 border-white bg-[#141414] px-4 py-[14px] shadow-2xl shadow-black/60" data-testid="interrupt-waiting">
-            <p className="flex items-center justify-center gap-3 text-sm text-white/70" role="status">
+            <p className="flex flex-wrap items-center justify-center gap-3 text-sm text-white/70" role="status">
               <SpinnerDots className="text-white/40" />
               <span>Waiting on a decision…</span>
+              {isLaterInterruptLink && (
+                <span className="font-mono text-xs tabular-nums text-white/60" data-testid="appeal-chain-depth">
+                  Appeal chain: {interruptDepth}
+                </span>
+              )}
               <span className="font-mono text-sm tabular-nums text-white/80">{interruptSeconds ?? 0}s</span>
             </p>
           </div>
         )}
       </NoticeStack>
 
-      <div className="mx-auto max-w-6xl px-3 pb-72 pt-3 sm:px-6 md:pb-8">
+      <div
+        className="mx-auto max-w-6xl px-3 pb-72 pt-3 sm:px-6 md:pb-8"
+        style={compact && view.role === 'player'
+          ? { paddingBottom: (handDockHeight || 288) + 16 }
+          : undefined}
+      >
         {/* Game Over is the first board element, directly under the top bar. */}
         {data.phase === 'finished' && (
           <Panel padding="roomy" className="relative mb-3 overflow-hidden text-center" aria-labelledby="game-over-title">
@@ -1037,14 +1114,17 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
         {/* Opponents rail */}
         {opponents.length > 0 && (
           <section aria-label="Other players" className="mb-4">
-            <div className="flex gap-3 overflow-x-auto pb-1 md:grid md:grid-cols-3 md:overflow-visible lg:grid-cols-4">
+            <div
+              data-testid="opponents-rail"
+              className="-mx-3 flex gap-3 overflow-x-auto overscroll-x-contain scroll-px-3 px-3 pb-1 [scroll-snap-type:x_proximity] [touch-action:pan-x_pan-y] sm:-mx-6 sm:scroll-px-6 sm:px-6 md:mx-0 md:grid md:grid-cols-3 md:gap-3 md:overflow-visible md:px-0 md:scroll-px-0 md:snap-none lg:grid-cols-4"
+            >
               {opponents.map((player) => {
                 const isActive = player.id === data.activePlayerId;
                 return (
                   <Panel
                     key={player.id}
                     padding="compact"
-                    className={`relative min-w-[168px] shrink-0 ${isActive ? 'ring-1 ring-white/30' : ''}`}
+                    className={`relative w-[82vw] max-w-[300px] shrink-0 snap-start md:w-auto md:max-w-none md:shrink ${isActive ? 'ring-1 ring-white/30' : ''}`}
                   >
                     {isActive && !data.paused && (
                       <span aria-hidden="true" className="pointer-events-none absolute inset-0 rounded-[var(--radius-panel)] ring-1 ring-white/25 motion-safe:animate-pulse-soft" />
@@ -1071,7 +1151,7 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
         {/* Main area */}
         <section className="grid gap-4 md:grid-cols-[minmax(0,1fr)_340px]">
           {view.role === 'player' && self ? (
-            <Panel className={`relative ${isMyTurn ? 'ring-1 ring-white/25' : ''}`} aria-labelledby="own-table-title">
+            <Panel data-testid="own-table-panel" className={`relative ${isMyTurn ? 'ring-1 ring-white/25' : ''}`} aria-labelledby="own-table-title">
               {isMyTurn && !data.paused && (
                 <span aria-hidden="true" className="pointer-events-none absolute inset-0 rounded-[var(--radius-panel)] ring-1 ring-white/25 motion-safe:animate-pulse-soft" />
               )}
@@ -1102,7 +1182,7 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
               )}
 
               {(showPlaceButton || showToHandButton) && (
-                <div className="mt-3 flex flex-wrap gap-2">
+                <div data-context-actions className="mt-3 flex flex-wrap gap-2">
                   {showPlaceButton && (
                     <Button size="sm" disabled={movePending} onClick={moveSelectedHandToTable}>Move Selected to Table</Button>
                   )}
@@ -1138,6 +1218,8 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
           {/* Hand dock (mobile: fixed bottom; desktop: right column). */}
           {view.role === 'player' && (
             <Panel
+              ref={handDockRef}
+              data-testid="hand-dock"
               padding="compact"
               className="fixed inset-x-0 bottom-0 z-30 rounded-b-none border-x-0 border-b-0 bg-black md:static md:z-auto md:rounded-[var(--radius-panel)] md:border-x md:border-b"
             >
@@ -1157,7 +1239,7 @@ export default function WorkerGameBoard({ roomCode, onLeave, onReturnToLobby }: 
                   )}
                   <button
                     type="button"
-                    className="flex items-center gap-1 rounded-full border border-line px-3 py-1 text-xs text-white/60 transition hover:text-white md:hidden"
+                    className="flex min-h-11 items-center gap-1 rounded-full border border-line px-3 py-1 text-xs text-white/60 transition hover:text-white md:hidden"
                     aria-expanded={handOpen}
                     onClick={() => setHandOpen((open) => !open)}
                   >

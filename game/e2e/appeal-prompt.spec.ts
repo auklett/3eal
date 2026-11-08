@@ -102,6 +102,66 @@ test('the appeal prompt is an opaque single-row panel with one countdown', async
   await expect(banner.getByText(/^\d+s appeal$/)).toHaveCount(0);
 });
 
+test('a depth-1 link asks the actor to appeal the target\'s APPEAL', async ({ page }) => {
+  const playedAppeal = { id: 'played-appeal', kind: 'action' as const, action: 'APPEAL' as const };
+  await mockRoomSocket(page, 'ABCD', playerView({
+    viewerId: BOB,
+    activePlayerId: BOB,
+    interrupt: {
+      id: 'interrupt-1',
+      kind: 'STEAL',
+      actorId: BOB,
+      targetId: ALICE,
+      targetCardId: aliceCards[0].id,
+      endsAt: Date.now() + 30_000,
+      appealDepth: 1,
+      appealPlayers: [ALICE]
+    },
+    aliceHand: [appeal],
+    interruptCard: { cardId: playedAppeal.id, card: playedAppeal, revealed: false }
+  }));
+  await page.goto('/game/ABCD');
+  await waitForOwnTable(page, /Your Table/);
+
+  const prompt = page.getByTestId('appeal-prompt');
+  await expect(prompt).toBeVisible();
+  await expect(prompt.getByText('Appeal their APPEAL?')).toBeVisible();
+  await expect(prompt.getByText('Alice appealed your STEAL.')).toBeVisible();
+  await expect(prompt.getByTestId('appeal-chain-depth')).toHaveText('Appeal chain: 1');
+  await expect(prompt.getByRole('button', { name: 'APPEAL' })).toBeVisible();
+  await expect(prompt.getByRole('button', { name: 'Pass' })).toBeVisible();
+});
+
+test('a depth-2 link asks the first appealer to counter the actor\'s APPEAL', async ({ page }) => {
+  const playedAppeal = { id: 'counter-appeal', kind: 'action' as const, action: 'APPEAL' as const };
+  await mockRoomSocket(page, 'ABCD', playerView({
+    viewerId: ALICE,
+    activePlayerId: BOB,
+    interrupt: {
+      id: 'interrupt-1',
+      kind: 'STEAL',
+      actorId: BOB,
+      targetId: ALICE,
+      targetCardId: aliceCards[0].id,
+      endsAt: Date.now() + 30_000,
+      appealDepth: 2,
+      appealPlayers: [ALICE, BOB]
+    },
+    aliceHand: [appeal],
+    interruptCard: { cardId: playedAppeal.id, card: playedAppeal, revealed: false }
+  }));
+  await page.goto('/game/ABCD');
+  await waitForOwnTable(page, /Your Table/);
+
+  const prompt = page.getByTestId('appeal-prompt');
+  await expect(prompt).toBeVisible();
+  await expect(prompt.getByText('Appeal their APPEAL?')).toBeVisible();
+  await expect(prompt.getByText('Bob appealed your APPEAL.')).toBeVisible();
+  await expect(prompt.getByTestId('appeal-chain-depth')).toHaveText('Appeal chain: 2');
+  await expect(prompt.getByRole('button', { name: 'APPEAL' })).toBeVisible();
+  await expect(prompt.getByRole('button', { name: 'Pass' })).toBeVisible();
+});
+
 test('the waiting notice uses the same opaque panel, shows seconds, and reveals nobody', async ({ page }) => {
   await mockRoomSocket(page, 'ABCD', playerView({
     activePlayerId: BOB,

@@ -57,16 +57,18 @@ You may perform these actions in any order and as often as desired:
 
 ### Interrupts
 
-Playing CONCEAL, STEAL, or REVEAL opens an interrupt with a maximum duration of 30 seconds. The turn timer pauses and resumes with its remaining time once the interrupt ends.
+Playing CONCEAL, STEAL, or REVEAL opens an interrupt. The turn timer pauses and resumes with its remaining time once the interrupt chain ends.
 
-- For STEAL or REVEAL, only the target may respond.
-- For CONCEAL, any opponent may respond.
+- On the first link, STEAL and REVEAL may be answered only by their target; CONCEAL may be answered by any opponent.
 - An eligible player holding APPEAL may play it or pass. An eligible player without APPEAL passes automatically.
-- The interrupt ends immediately when someone appeals, all eligible APPEAL holders have passed, or the 30-second maximum expires. The first appeal received by the server wins.
-- APPEAL cancels the pending action; both action cards are shuffled straight back into the deck. APPEAL cannot itself be appealed.
+- APPEAL can itself be appealed. After an APPEAL, the player whose action or appeal was just countered may play another APPEAL: the actor answers the first APPEAL, the first appealer answers the counter-APPEAL, and those two players alternate indefinitely. There is no chain-depth cap.
+- Each link gets a fresh 30-second window. The chain ends when the next eligible player passes or that link's window expires, and the turn timer stays paused for the whole chain.
+- Parity decides the original action: an odd number of APPEALs cancels it; an even number (including zero) lets it resolve. Expiry on the first link resolves the action; expiry on a later link follows the same parity rule.
+- Every APPEAL in the chain is held out of play together with the original action card. When the chain ends they are all shuffled back into the deck together.
 - Fast passing may reveal whether someone holds APPEAL; the game intentionally adds no random or fixed wait to hide that information.
 - REVEAL with no concealed cards on the target's Table is rejected and does not consume its action card. Because every Table starts revealed, REVEAL has no legal target until a card is concealed.
 - During an open interrupt, the targeted player sees which Table card is targeted, even if they do not hold APPEAL. For a blind STEAL/REVEAL this identity is private to the card's owner; for CONCEAL the actor's own revealed target is shown to the other players. The actor on a blind target, uninvolved players, and spectators do not receive the card identity, and no APPEAL-holder list is revealed.
+- On a later link, only the player being countered sees the APPEAL face just played against them. Everyone else receives no private card. The public view shows the chain depth and the names of players who have already appealed, never who still holds an APPEAL.
 
 CONCEAL targets one of the actor's own revealed Table cards. STEAL takes a Normal/TEAL card from an opponent's Table, selected directly if revealed and blindly if concealed. If the actor has fewer than nine cards when STEAL resolves, the stolen card moves to their Table and keeps its revealed/concealed state; at nine cards, it goes to their Hand. A card placed from Hand later enters concealed. REVEAL selects a concealed card on an opponent's Table blindly and makes it revealed when resolved.
 

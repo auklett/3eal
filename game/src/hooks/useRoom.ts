@@ -72,8 +72,9 @@ function applyOptimistic(view: View, message: RoomCommand): View {
   }
 
   if (message.t === 'appeal') {
+    // An APPEAL now opens a later link rather than always resolving, so keep
+    // the current interrupt visible until the authoritative snapshot arrives.
     data.you.hand = data.you.hand.filter((card) => card.id !== message.cardId);
-    data.interrupt = null;
     return { role: 'player', data };
   }
 

@@ -15,7 +15,7 @@ type ActionCard = { id: string; kind: 'action'; action: ActionKind };
 type Card       = NormalCard | TealCard | ActionCard;
 ```
 
-Reveal state is **not** stored on the card. It lives on the Table slot as `{ card: TableCard; revealed: boolean }`, because the same card can be concealed on one Table and then revealed on another after a STEAL. Only NORMAL and TEAL cards can sit on a Table; ACTION cards only ever exist in a Hand. Each player's three starting Table cards are dealt already revealed (`revealed: true`); a card later moved from Hand to the Table is concealed (`revealed: false`) until a REVEAL makes it public.
+Reveal state is **not** stored on the card. It lives on the Table slot as `{ card: TableCard; revealed: boolean }`, because the same card can be concealed on one Table and then revealed on another after a STEAL. Only NORMAL and TEAL cards can sit on a Table; ACTION cards exist in a Hand, or temporarily in `pendingAction` while an interrupt chain is still deciding whether the original action resolves. Each player's three starting Table cards are dealt already revealed (`revealed: true`); a card later moved from Hand to the Table is concealed (`revealed: false`) until a REVEAL makes it public.
 
 ### 1.2 Player Schema
 ```typescript
@@ -44,6 +44,21 @@ type LastInterruptResult = {
   kind: 'CONCEAL' | 'STEAL' | 'REVEAL';
   outcome: 'appealed' | 'resolved' | 'expired';
   resolvedAt: number;    // server timestamp used as the client notice key
+  appealDepth: number;   // appeals in the chain; odd => cancelled, even => resolved
+  appealedBy: string | null; // decisive / last appealer, or null when resolved/expired
+  stolenToHandBy?: string | null; // private STEAL-actor marker
+};
+
+type InterruptState = {
+  id: string;
+  kind: 'CONCEAL' | 'STEAL' | 'REVEAL';
+  actorId: string;
+  targetId: string;
+  targetCardId: string;
+  endsAt: number | null; // current link deadline; null while paused
+  appeals: { playerId: string; cardId: string }[]; // oldest first; depth = length
+  responderIds: string[]; // depth-0 APPEAL holders only
+  passedIds: string[];    // depth-0 passers for a CONCEAL race
 };
 ```
 
@@ -70,7 +85,11 @@ type RoomState = {
   turnNumber: number;
   turnEndsAt: number | null;               // absolute deadline, or null while paused
   turnRemainingMs: number | null;          // frozen turn time captured on pause
-  pendingAction: { actionCard: ActionCard; interrupt: InterruptState } | null;
+  pendingAction: {
+    actionCard: ActionCard;
+    interrupt: InterruptState;
+    appealCards: Card[];                  // chain cards held out of play until it ends
+  } | null;
   lastInterruptResult: LastInterruptResult | null;
   winnerId: string | null;
   winningSets: string[][] | null;          // card IDs of the three validated sets, grouped 3×3
@@ -96,9 +115,9 @@ While `paused` is true every absolute deadline is cleared (so an alarm cannot fi
 
 `lastInterruptResult` belongs to the turn in which the interrupt resolved. `beginTurn` and `finishTurn` clear it, so clients hide the transient result notice when the turn changes. `resolvedAt` is the server timestamp used to key that notice.
 
-Interrupt eligibility is deliberately **not** stored as a broadcastable list. Whether a player is a legal target is public; whether that player also holds an APPEAL card is private and is re-checked per socket from the authoritative hand, never serialized into a view.
+Interrupt eligibility is deliberately **not** stored as a broadcastable list. Whether a player is a legal target is public; whether that player also holds an APPEAL card is private and is re-checked per socket from the authoritative hand, never serialized into a view. The public interrupt exposes only `appealDepth` and `appealPlayers` (the IDs of players who have already played an APPEAL, oldest first). `responderIds`, `passedIds`, and whether any player still holds an unplayed APPEAL are never serialized. Clients derive later-link eligibility from the depth parity and `appealPlayers`.
 
-During an interrupt, `you.interruptCard` contains the targeted card only for viewers allowed to see its identity: the target for STEAL/REVEAL, and every non-actor player for CONCEAL (the actor's own revealed card). The actor, uninvolved players, and spectators receive `null`. This private card view is independent of APPEAL eligibility; no responder or APPEAL-holder list is serialized.
+On the first link, `you.interruptCard` contains the targeted card only for viewers allowed to see its identity: the target for STEAL/REVEAL, and every non-actor player for CONCEAL (the actor's own revealed card). The actor, uninvolved players, and spectators receive `null`. On a later link it instead contains the APPEAL face just played against the one currently eligible responder; every other player and every spectator receives `null`. This is still independent of who holds an unplayed APPEAL.
 
 Rejoin requests remain authoritative server state in `rejoinRequests`. They are serialized only into the host's private player view as `you.rejoinRequests: Array<{ requestId, name }>`; every other player view and every spectator view receives an empty list. The host UI derives its notice strip from snapshots rather than a separate request message.
 
@@ -128,7 +147,7 @@ Each player takes one CONCEAL, one STEAL, one REVEAL, and one APPEAL from the al
 1. **CONCEAL** — Hide one of your own Revealed Table cards
 2. **STEAL** — Take a Normal or TEAL card from an opponent's Table
 3. **REVEAL** — Force a Concealed card on an opponent's Table to become Revealed
-4. **APPEAL** — Block an opponent's CONCEAL, STEAL, or REVEAL
+4. **APPEAL** — Cancel an opponent's CONCEAL, STEAL, REVEAL, or a later APPEAL in the same chain
 
 ### Wild Card:
 - **TEAL** — fixed Teal color (`008080`), flexible shape/number. Drawn into Hand first, then may be moved to the Table during Main.
@@ -158,10 +177,14 @@ Each player takes one CONCEAL, one STEAL, one REVEAL, and one APPEAL from the al
 - **Phase:** Played during MAIN phase, triggers INTERRUPT phase.
 
 ### 3.4 APPEAL
-- **Trigger:** During the INTERRUPT phase, by a player eligible under the action's targeting rule and holding an APPEAL card. Eligibility is checked against private server state and is not broadcast as a player list.
-- **Effect:** Cancels `pendingAction`; both the original action card and the APPEAL card are shuffled straight back into the draw deck.
-- **Race Resolution:** If multiple eligible players attempt APPEAL (only possible for CONCEAL, which can have several eligible players), the first appeal the server receives wins and is recorded as the interrupt outcome (`appealed`, with `appealedBy`); later attempts are rejected.
-- **Window:** At most 30 seconds from action creation. The window closes as soon as an APPEAL wins or all eligible players pass; players without APPEAL pass automatically. The turn timer is paused until the interrupt resolves, and a host pause freezes the appeal window too (see §4).
+- **Trigger:** During the INTERRUPT phase, by the player eligible for the current link and holding an APPEAL card. Eligibility is checked against private server state and is not broadcast as a player list.
+  - Depth 0 follows the action's targeting rule: the STEAL/REVEAL target, or any opponent for CONCEAL.
+  - Depth 1 belongs to the action's actor; depth 2 belongs to the first appealer; later depths alternate between the actor and the first appealer. There is no depth cap.
+- **Effect:** Appends a link to the chain and opens a fresh 30-second window for the next eligible player. The chain is resolved by parity: an odd number of APPEALs cancels the original action; an even number (including zero) lets it resolve. Expiry at depth 0 (`expired`) resolves the action; expiry on a later link follows the same parity rule.
+- **Race Resolution:** At depth 0 a CONCEAL may have several eligible players. Once one of them appeals, only the actor can answer, and the other depth-0 responders drop out. `responderIds` and `passedIds` only govern that first link.
+- **Auto-pass:** If the next eligible player holds no APPEAL, the chain ends immediately as if that player passed. A depth-0 responder without APPEAL never enters `responderIds`.
+- **Window:** Each link lasts at most 30 seconds from the latest APPEAL. The turn timer stays paused for the whole chain; a host pause freezes the current link in `pauseRemaining.interrupt` (see §4).
+- **Cards:** The original action card and every APPEAL in the chain are held in `pendingAction.appealCards` and stay out of play until the chain ends. They are then shuffled back into the deck together via the seeded RNG.
 
 ### 3.5 TEAL (Wild Card — not an action)
 - Lives on the Table alongside Normal cards; dealt and drawn the same way.
@@ -178,7 +201,7 @@ Each player takes one CONCEAL, one STEAL, one REVEAL, and one APPEAL from the al
    - Move any number of NORMAL/TEAL cards from their Table to Hand (they are shuffled back into the deck at turn end).
    - Play CONCEAL, STEAL, or REVEAL from their Hand — each triggers INTERRUPT.
    - Rearrange their own Table freely. Arrangement is purely local presentation order: it never contacts the server and is not synchronized to opponents.
-3. **INTERRUPT** — Eligible player(s) have 30 seconds to play APPEAL; if none do, the action resolves and phase returns to MAIN.
+3. **INTERRUPT** — The current eligible player has 30 seconds to play APPEAL or pass. Each link alternates the eligible player and resets the window; the chain ends when a player passes or a link expires, then parity decides whether the action resolves and phase returns to MAIN.
 4. **End Turn** — All unused Action cards remain in Hand; every other card left in Hand is shuffled straight back into the deck. Tables never exceed 9 cards; if a Table is ever over the limit, the server rejects an explicit End Turn with a clear error rather than moving cards during cleanup. Then check for a win; the server records the valid partition it finds in `winningSets`, and the turn passes to the next player. Timer expiry uses the same cleanup without trimming a Table. `lastInterruptResult` is cleared when the turn ends or the next turn begins, so its transient notice never carries over. The default turn timer is 60 seconds and the host may set it to 15–180 seconds in the lobby.
 
 ### Pausing
@@ -251,11 +274,12 @@ Every client/server message is Zod-validated in `src/shared/protocol.ts`.
 
 - **Pause / resume intents:** the host sends `{ t: 'pause' }` and `{ t: 'resume' }`. The server is authoritative about whether the host may pause; the resulting state arrives as a filtered `view` snapshot with `paused`, `pauseRemaining`, and null deadlines.
 - **Host transfer:** `{ t: 'transferHost', playerId }` is a Zod-validated, host-only management message handled outside the pure game reducer. It is valid in every phase, including while paused or finished, and accepts another connected, non-left, non-kicked player or spectator. It changes only `hostId`: seats, phase, pause state, timers, and rejoin requests remain unchanged. The new host receives the private rejoin-request list and pause/resume controls; the previous host keeps their seat and role.
-- **Interrupt deadline:** the current interrupt's appeal deadline is the `endsAt` field (`number | null`). It is `null` while the game is paused, with the frozen remaining time in `pauseRemaining.interrupt`.
-- **Targeted-card view:** `you.interruptCard` is private and defaults to `null`. STEAL/REVEAL expose the card to its owner only; CONCEAL exposes the actor's public revealed card to non-actor players. Actors on blind targets, uninvolved players, and spectators receive `null`. No APPEAL-holder or responder list is included.
+- **Interrupt chain:** the public `interrupt` carries `appealDepth` and `appealPlayers` (already-played appealers only). `responderIds`, `passedIds`, and unplayed APPEAL ownership stay server-private.
+- **Interrupt deadline:** the current link's deadline is the `endsAt` field (`number | null`). It is `null` while the game is paused, with the frozen remaining time in `pauseRemaining.interrupt`. Each APPEAL resets `endsAt` to `now + 30_000`; the room alarm always targets the earliest deadline.
+- **Targeted-card view:** `you.interruptCard` is private and defaults to `null`. On the first link STEAL/REVEAL expose the card to its owner only; CONCEAL exposes the actor's public revealed card to non-actor players. Actors on blind targets, uninvolved players, and spectators receive `null`. On a later link only the currently eligible responder sees the APPEAL face just played against them. No APPEAL-holder or responder list is included.
 - **`winningSets`:** the FINISHED snapshot carries `winningSets: string[][] | null` — the card IDs of the three validated sets (grouped 3×3) the engine found — so every client renders the same Game Over grouping.
 - **End-of-game intents:** `{ t: 'returnToLobby' }` is host-only and only valid while `phase === 'finished'`; the Worker generates the fresh seed. `{ t: 'leaveRoom' }` is available in the lobby and after the game ends. Both are Zod-validated before reaching the engine helpers.
 - **Leave confirmation:** after a successful `leaveRoom`, the Worker sends `{ t: 'left' }` to the leaving member and closes their socket. The client stops reconnecting and navigates home. The host's `returnToLobby` produces an ordinary lobby `view` snapshot; no `left` message is sent to the host.
-- **Transient interrupt result:** `lastInterruptResult` now includes `resolvedAt` (server milliseconds). Clients key the five-second result notice on `kind + outcome + resolvedAt` and remember it in `sessionStorage`, so the same snapshot does not re-show the notice after a reconnect or reload.
+- **Transient interrupt result:** `lastInterruptResult` includes `resolvedAt` (server milliseconds), `appealDepth`, and `appealedBy` (the decisive last appealer, or `null` when the action resolved). Clients key the five-second result notice on `kind + outcome + resolvedAt` and remember it in `sessionStorage`, so the same snapshot does not re-show the notice after a reconnect or reload. The wording distinguishes an odd (cancelled) chain from an even (countered then resolved) chain.
 - **Host-only rejoin requests:** only the host's player `view.data.you.rejoinRequests` contains pending request IDs and names; all other views get `[]`.
 - **Rejection error:** while `paused` is true the server rejects game intents (placing, moving, ending a turn, appealing, passing, targeting) and answers with the error message `Game is paused`.
