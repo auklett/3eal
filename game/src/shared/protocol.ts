@@ -86,18 +86,27 @@ const PublicInterruptSchema = z.object({
   targetId: playerIdSchema,
   targetCardId: cardIdSchema,
   // `null` while the game is paused (see pauseRemaining.interrupt).
-  endsAt: z.number().int().nullable()
+  endsAt: z.number().int().nullable(),
+  // Number of appeals played in this chain (public chain-depth indicator).
+  appealDepth: z.number().int().nonnegative(),
+  // Players who have already played an APPEAL; public once played.
+  appealPlayers: z.array(playerIdSchema)
 }).strict();
 
 const LastInterruptResultSchema = z.object({
   kind: z.enum(['CONCEAL', 'STEAL', 'REVEAL']),
   outcome: z.enum(['appealed', 'resolved', 'expired']),
-  resolvedAt: z.number().int()
+  resolvedAt: z.number().int(),
+  // Number of appeals in the chain (0 = none).
+  appealDepth: z.number().int().nonnegative(),
+  // The decisive / last appealer, or null.
+  appealedBy: z.string().uuid().nullable()
 }).strict();
 
 const PrivateInterruptCardSchema = z.object({
   cardId: cardIdSchema,
-  card: TableCardSchema,
+  // A Table card on the first link, or the just-played APPEAL face on later links.
+  card: CardSchema,
   revealed: z.boolean()
 }).strict();
 
@@ -186,7 +195,7 @@ export type PlayerView = PublicView & {
     id: string;
     hand: Card[];
     concealedOwn: Record<string, TableCard>;
-    interruptCard: { cardId: string; card: TableCard; revealed: boolean } | null;
+    interruptCard: { cardId: string; card: Card; revealed: boolean } | null;
     stolenToHandAt: number | null;
     actionRefillCount: number;
     rejoinRequests: Array<{ requestId: string; name: string }>;

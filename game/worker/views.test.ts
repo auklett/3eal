@@ -275,6 +275,83 @@ describe('filtered room views', () => {
     expect(responderView.data.you.interruptCard).toEqual({ cardId: card.id, card, revealed: true });
   });
 
+  it('publishes chain depth and shows the played APPEAL face only to the countered player', () => {
+    const room = startedThreePlayerRoom();
+    const actor = room.players.find((player) => player.id === room.activePlayerId);
+    const target = room.players.find((player) => player.id !== actor?.id);
+    const uninvolved = room.players.find((player) => player.id !== actor?.id && player.id !== target?.id);
+    if (!actor || !target || !uninvolved) throw new Error('Expected three players');
+    actor.hand.push({ id: 'chain-steal', kind: 'action', action: 'STEAL' });
+    // A second APPEAL keeps the depth-2 link open after the target uses the first.
+    target.hand.push({ id: 'target-appeal-2', kind: 'action', action: 'APPEAL' });
+    const opened = reduceRoom(room, actor.id, {
+      t: 'action',
+      cardId: 'chain-steal',
+      kind: 'STEAL',
+      targetId: target.id,
+      slot: 0
+    }, 10_000);
+    if ('error' in opened) throw new Error(opened.error);
+    const targetAppeal = target.hand.find((card) => card.kind === 'action' && card.action === 'APPEAL');
+    if (!targetAppeal) throw new Error('Expected the target to hold APPEAL');
+
+    const depth1 = reduceRoom(opened.state, target.id, { t: 'appeal', cardId: targetAppeal.id }, 11_000);
+    if ('error' in depth1) throw new Error(depth1.error);
+
+    const spectator1 = spectatorView(depth1.state, '20000000-0000-4000-8000-000000000001');
+    expect(spectator1.data.interrupt).toEqual({
+      id: opened.state.pendingAction?.interrupt.id,
+      kind: 'STEAL',
+      actorId: actor.id,
+      targetId: target.id,
+      targetCardId: opened.state.pendingAction?.interrupt.targetCardId,
+      endsAt: 41_000,
+      appealDepth: 1,
+      appealPlayers: [target.id]
+    });
+
+    // The actor was just countered, so only the actor sees the APPEAL face.
+    const actor1 = playerView(depth1.state, actor.id);
+    if (actor1.role !== 'player') throw new Error('Expected a player view');
+    expect(actor1.data.you.interruptCard).toEqual({
+      cardId: targetAppeal.id,
+      card: targetAppeal,
+      revealed: false
+    });
+    const target1 = playerView(depth1.state, target.id);
+    const uninvolved1 = playerView(depth1.state, uninvolved.id);
+    if (target1.role !== 'player' || uninvolved1.role !== 'player') throw new Error('Expected player views');
+    expect(target1.data.you.interruptCard).toBeNull();
+    expect(uninvolved1.data.you.interruptCard).toBeNull();
+
+    const actorAppeal = actor.hand.find((card) => card.kind === 'action' && card.action === 'APPEAL');
+    if (!actorAppeal) throw new Error('Expected the actor to hold APPEAL');
+    const depth2 = reduceRoom(depth1.state, actor.id, { t: 'appeal', cardId: actorAppeal.id }, 12_000);
+    if ('error' in depth2) throw new Error(depth2.error);
+
+    const spectator2 = spectatorView(depth2.state, '20000000-0000-4000-8000-000000000001');
+    expect(spectator2.data.interrupt).toMatchObject({ appealDepth: 2, appealPlayers: [target.id, actor.id] });
+
+    // At depth 2 the first appealer is the one countered by the actor's APPEAL.
+    const target2 = playerView(depth2.state, target.id);
+    const actor2 = playerView(depth2.state, actor.id);
+    if (target2.role !== 'player' || actor2.role !== 'player') throw new Error('Expected player views');
+    expect(target2.data.you.interruptCard).toEqual({
+      cardId: actorAppeal.id,
+      card: actorAppeal,
+      revealed: false
+    });
+    expect(actor2.data.you.interruptCard).toBeNull();
+    expect(playerView(depth2.state, uninvolved.id).data.you.interruptCard).toBeNull();
+
+    // Chain internals (who may still respond, who passed) are never public.
+    for (const view of [spectator1, spectator2, actor1, target1, target2, actor2]) {
+      const serialized = JSON.stringify(view);
+      expect(serialized).not.toContain('"responderIds"');
+      expect(serialized).not.toContain('"passedIds"');
+    }
+  });
+
   it('marks a stolen-to-Hand result only in the actor private view', () => {
     const room = startedRoom();
     const active = room.players.find((player) => player.id === room.activePlayerId);
@@ -310,7 +387,13 @@ describe('filtered room views', () => {
     expect(targetView.data.you.stolenToHandAt).toBeNull();
 
     const spectator = spectatorView(result.state, '20000000-0000-4000-8000-000000000001');
-    expect(spectator.data.lastInterruptResult).toEqual({ kind: 'STEAL', outcome: 'resolved', resolvedAt: 10_000 });
+    expect(spectator.data.lastInterruptResult).toEqual({
+      kind: 'STEAL',
+      outcome: 'resolved',
+      resolvedAt: 10_000,
+      appealDepth: 0,
+      appealedBy: null
+    });
     expect(JSON.stringify(spectator)).not.toContain('stolenToHandBy');
     expect(JSON.stringify(actorView)).not.toContain('stolenToHandBy');
   });

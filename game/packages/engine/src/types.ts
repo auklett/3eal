@@ -33,6 +33,8 @@ export type Card = NormalCard | TealCard | ActionCard;
 export type TableCard = NormalCard | TealCard;
 export type Set = [TableCard, TableCard, TableCard];
 
+export type AppealLink = { playerId: CardId; cardId: CardId };
+
 export type InterruptActionIntent = {
   id: string;
   kind: InterruptAction;
@@ -44,7 +46,11 @@ export type InterruptActionIntent = {
 export type InterruptState = InterruptActionIntent & {
   /** Absolute deadline, or `null` while the host has the game paused. */
   endsAt: number | null;
+  /** Appeals played in this chain, oldest first. `depth` is its length. */
+  appeals: AppealLink[];
+  /** Depth-0 initial eligibles (APPEAL holders only). */
   responderIds: string[];
+  /** Depth-0 passers (CONCEAL multi-responder race). */
   passedIds: string[];
 };
 
@@ -54,11 +60,19 @@ export type InterruptOutcome =
 
 export type InterruptResponse =
   | { status: 'open'; interrupt: InterruptState }
-  | { status: 'resolved'; reason: 'all-passed' | 'appealed'; appealedBy?: string };
+  | { status: 'resolved'; reason: 'all-passed' | 'appealed' | 'expired'; appealedBy?: string };
 
 export type InterruptParticipant = {
   id: string;
   hand: Card[];
 };
+
+/** The players currently eligible to respond, given the chain depth. */
+export function eligibleResponders(interrupt: InterruptState): string[] {
+  const depth = interrupt.appeals.length;
+  if (depth === 0) return interrupt.responderIds;
+  if (depth % 2 === 1) return [interrupt.actorId];
+  return [interrupt.appeals[depth - 2]!.playerId];
+}
 
 export type RandomSource = () => number;

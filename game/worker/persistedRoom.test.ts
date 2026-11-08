@@ -113,7 +113,36 @@ describe('paused room persistence', () => {
     if (!parsed.success) return;
     expect(parsed.data.players.every((player) => player.left === false)).toBe(true);
     expect(parsed.data.spectators[0].left).toBe(false);
-    expect(parsed.data.lastInterruptResult?.resolvedAt).toBe(0);
+    expect(parsed.data.lastInterruptResult).toMatchObject({
+      resolvedAt: 0,
+      appealDepth: 0,
+      appealedBy: null
+    });
+  });
+
+  it('backfills the appeal chain fields for rows saved before appeals existed', () => {
+    const legacy = JSON.parse(JSON.stringify(pausedInterruptRoom())) as {
+      pendingAction: { interrupt: Record<string, unknown>; appealCards?: unknown };
+      lastInterruptResult: Record<string, unknown> | null;
+    };
+    delete legacy.pendingAction.interrupt['appeals'];
+    delete legacy.pendingAction.appealCards;
+    legacy.lastInterruptResult = { kind: 'REVEAL', outcome: 'resolved', resolvedAt: 5_000 };
+
+    const parsed = persistedRoomSchema.safeParse(legacy);
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.pendingAction?.interrupt.appeals).toEqual([]);
+    expect(parsed.data.pendingAction?.appealCards).toEqual([]);
+    expect(parsed.data.lastInterruptResult).toMatchObject({
+      resolvedAt: 5_000,
+      appealDepth: 0,
+      appealedBy: null
+    });
+    // The restored room loads as a valid depth-0 chain.
+    const restored = playerView(parsed.data, hostId);
+    expect(restored.data.interrupt?.appealDepth).toBe(0);
+    expect(restored.data.interrupt?.appealPlayers).toEqual([]);
   });
 
   it('round-trips a paused interrupt without a numeric deadline', () => {

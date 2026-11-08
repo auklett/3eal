@@ -82,6 +82,32 @@ test('an ineligible player sees one waiting notice during an interrupt', async (
   await expect(page.getByText('Play APPEAL?')).toHaveCount(0);
 });
 
+test('the waiting notice publishes the chain depth without revealing who may appeal', async ({ page }) => {
+  await mockRoomSocket(page, 'ABCD', playerView({
+    activePlayerId: BOB,
+    interrupt: {
+      id: 'interrupt-1',
+      kind: 'STEAL',
+      actorId: BOB,
+      targetId: ALICE,
+      targetCardId: 'alice-1',
+      endsAt: Date.now() + 30_000,
+      appealDepth: 1,
+      appealPlayers: [ALICE]
+    }
+  }));
+  await page.goto('/game/ABCD');
+  await waitForOwnTable(page, /Your Table/);
+
+  const waiting = page.getByTestId('interrupt-waiting');
+  await expect(waiting).toBeVisible();
+  await expect(waiting.getByTestId('appeal-chain-depth')).toHaveText('Appeal chain: 1');
+  await expect(waiting.getByRole('button')).toHaveCount(0);
+  await expect(waiting).not.toContainText('Bob');
+  await expect(waiting).not.toContainText('Alice');
+  await expect(waiting).not.toContainText('APPEAL');
+});
+
 test('the interrupt result shows once and does not reappear after a reload', async ({ page }) => {
   await mockRoomSocket(page, 'ABCD', playerView({
     lastInterruptResult: { kind: 'STEAL', outcome: 'appealed', resolvedAt: 1_234 }

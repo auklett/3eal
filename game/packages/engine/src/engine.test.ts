@@ -1,6 +1,6 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { ACTIONS, COLORS, DECK_SIZE, NUMBERS, createDeck, createSeededRandom, findWinningPartition, hasWon, isValidSet, MAX_INTERRUPT_DURATION_MS, openInterrupt, respondToInterrupt, expireInterrupt, type Card, type Color, type NumberValue, type Shape, type TableCard } from './index';
+import { ACTIONS, COLORS, DECK_SIZE, NUMBERS, createDeck, createSeededRandom, eligibleResponders, findWinningPartition, hasWon, isValidSet, MAX_INTERRUPT_DURATION_MS, openInterrupt, respondToInterrupt, expireInterrupt, type Card, type Color, type NumberValue, type Shape, type TableCard } from './index';
 
 function normalCard(id: string, color: Color, number: NumberValue, shape: Shape): Card {
   return { id, kind: 'normal', color, number, shape };
@@ -156,7 +156,7 @@ describe('interrupt transitions', () => {
     if (result.status !== 'open') return;
     expect(result.interrupt.endsAt).toBe(1000 + MAX_INTERRUPT_DURATION_MS);
     const endsAt = result.interrupt.endsAt ?? 0;
-    expect(expireInterrupt(result.interrupt, endsAt)).toEqual({ status: 'resolved', reason: 'all-passed' });
+    expect(expireInterrupt(result.interrupt, endsAt)).toEqual({ status: 'resolved', reason: 'expired' });
   });
 
   it('auto-resolves when no eligible player holds APPEAL', () => {
@@ -174,7 +174,7 @@ describe('interrupt transitions', () => {
     if (result.status === 'open') expect(result.interrupt.responderIds).toEqual(['b']);
   });
 
-  it('allows any opponent to appeal CONCEAL and ends on the first appeal', () => {
+  it('allows any opponent to appeal CONCEAL and opens a counter-appeal link', () => {
     const conceal = { ...action, kind: 'CONCEAL' as const, targetId: 'a' };
     const result = openInterrupt(conceal, [
       { id: 'a', hand: [appeal] },
@@ -184,8 +184,84 @@ describe('interrupt transitions', () => {
     expect(result.status).toBe('open');
     if (result.status !== 'open') return;
     expect(result.interrupt.responderIds).toEqual(['b', 'c']);
-    expect(respondToInterrupt(result.interrupt, 'b', 'appeal', 1))
-      .toEqual({ status: 'resolved', reason: 'appealed', appealedBy: 'b' });
+    // b appeals (depth 1): opens a counter-appeal link for actor a
+    const linked = respondToInterrupt(result.interrupt, 'b', 'appeal', 1, 'appeal-b');
+    expect(linked.status).toBe('open');
+    if (linked.status !== 'open') return;
+    expect(linked.interrupt.appeals).toEqual([{ playerId: 'b', cardId: 'appeal-b' }]);
+    expect(eligibleResponders(linked.interrupt)).toEqual(['a']);
+    // a counter-appeals (depth 2)
+    const counter = respondToInterrupt(linked.interrupt, 'a', 'appeal', 2, 'appeal-a');
+    expect(counter.status).toBe('open');
+    if (counter.status !== 'open') return;
+    expect(counter.interrupt.appeals).toEqual([
+      { playerId: 'b', cardId: 'appeal-b' },
+      { playerId: 'a', cardId: 'appeal-a' }
+    ]);
+    expect(eligibleResponders(counter.interrupt)).toEqual(['b']);
+    // b passes at depth 2 (even): chain ends, action resolves
+    const ended = respondToInterrupt(counter.interrupt, 'b', 'pass', 3);
+    expect(ended.status).toBe('resolved');
+    expect(ended.reason).toBe('all-passed');
+  });
+
+  it('alternates the eligible responder for an indefinite number of links', () => {
+    fc.assert(fc.property(fc.integer({ min: 0, max: 8 }), (appeals) => {
+      const opened = openInterrupt(action, [
+        { id: 'a', hand: [appeal, { id: 'appeal-a2', kind: 'action', action: 'APPEAL' }] },
+        { id: 'b', hand: [appeal, { id: 'appeal-b2', kind: 'action', action: 'APPEAL' }] }
+      ], 0);
+      expect(opened.status).toBe('open');
+      if (opened.status !== 'open') return;
+      let interrupt = opened.interrupt;
+      let now = 0;
+      for (let depth = 0; depth < appeals; depth += 1) {
+        const expected = depth % 2 === 0 ? ['b'] : ['a'];
+        expect(eligibleResponders(interrupt)).toEqual(expected);
+        const playerId = expected[0];
+        now += 1000;
+        const response = respondToInterrupt(interrupt, playerId, 'appeal', now, `appeal-${depth}`);
+        expect(response.status).toBe('open');
+        if (response.status !== 'open') return;
+        interrupt = response.interrupt;
+        expect(interrupt.appeals).toHaveLength(depth + 1);
+        // Each link gets its own fresh 30 second window.
+        expect(interrupt.endsAt).toBe(now + MAX_INTERRUPT_DURATION_MS);
+      }
+      const terminalPlayer = appeals % 2 === 0 ? 'b' : 'a';
+      expect(eligibleResponders(interrupt)).toEqual([terminalPlayer]);
+      expect(respondToInterrupt(interrupt, terminalPlayer, 'pass', now + 1))
+        .toEqual({ status: 'resolved', reason: 'all-passed' });
+    }), { numRuns: 9 });
+  });
+
+  it('alternates a CONCEAL race between the first appealer and the actor', () => {
+    const conceal = { ...action, kind: 'CONCEAL' as const, targetId: 'a' };
+    const opened = openInterrupt(conceal, [
+      { id: 'a', hand: [appeal] },
+      { id: 'b', hand: [appeal] },
+      { id: 'c', hand: [appeal] }
+    ], 0);
+    expect(opened.status).toBe('open');
+    if (opened.status !== 'open') return;
+    expect(eligibleResponders(opened.interrupt)).toEqual(['b', 'c']);
+
+    // Either opponent may open the race; the first one is remembered.
+    const first = respondToInterrupt(opened.interrupt, 'c', 'appeal', 1, 'appeal-c');
+    if (first.status !== 'open') throw new Error('Expected an open link');
+    expect(eligibleResponders(first.interrupt)).toEqual(['a']);
+    expect(() => respondToInterrupt(first.interrupt, 'b', 'pass', 2)).toThrow();
+
+    const counter = respondToInterrupt(first.interrupt, 'a', 'appeal', 2, 'appeal-a');
+    if (counter.status !== 'open') throw new Error('Expected an open link');
+    expect(eligibleResponders(counter.interrupt)).toEqual(['c']);
+
+    const third = respondToInterrupt(counter.interrupt, 'c', 'appeal', 3, 'appeal-c2');
+    if (third.status !== 'open') throw new Error('Expected an open link');
+    expect(eligibleResponders(third.interrupt)).toEqual(['a']);
+
+    const ended = respondToInterrupt(third.interrupt, 'a', 'pass', 4);
+    expect(ended).toEqual({ status: 'resolved', reason: 'all-passed' });
   });
 
   it('closes after all APPEAL holders pass and rejects ineligible responses', () => {

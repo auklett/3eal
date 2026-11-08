@@ -3,6 +3,7 @@ import {
   countCompleteSets,
   createRoom,
   createSeededRandom,
+  eligibleAppealIds,
   reduceRoom,
   type RoomIntent,
   type RoomPlayer,
@@ -170,12 +171,17 @@ function resolveInterrupts(
   let appealSwing = false;
   while (current.pendingAction) {
     const interrupt = current.pendingAction.interrupt;
-    const responderId = interrupt.responderIds.find((id) => !interrupt.passedIds.includes(id));
+    const depth = interrupt.appeals.length;
+    const responderId = eligibleAppealIds(interrupt)
+      .find((id) => depth > 0 || !interrupt.passedIds.includes(id));
     if (!responderId) break;
     const responder = playerFor(current, responderId);
     const appeal = responder.hand.find((card) => card.kind === 'action' && card.action === 'APPEAL');
+    // Bots only contest the opening action. On later links they pass, which
+    // ends the chain and lets the parity rule decide the outcome.
     const shouldAppeal = Boolean(
       appeal
+      && depth === 0
       && interrupt.kind === 'STEAL'
       && interrupt.targetId === responderId
       && lossIfStolen > 0

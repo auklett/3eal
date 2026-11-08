@@ -9,6 +9,7 @@ interface PanelProps {
   padding?: Padding;
   'aria-label'?: string;
   'aria-labelledby'?: string;
+  'data-testid'?: string;
   role?: string;
 }
 

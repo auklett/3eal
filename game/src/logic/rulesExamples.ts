@@ -102,7 +102,7 @@ export const actionExamples: UiCard[] = [
   action('action-conceal', 'CONCEAL', 'CONCEAL', 'Hide a revealed card'),
   action('action-steal', 'STEAL', 'STEAL', 'Take a card from opponent'),
   action('action-reveal', 'REVEAL', 'REVEAL', 'Expose a concealed card'),
-  action('action-appeal', 'APPEAL', 'APPEAL', 'Cancel an action card')
+  action('action-appeal', 'APPEAL', 'APPEAL', 'Cancel an action or an appeal')
 ];
 
 /** Section 6: a normal card shown revealed, so the eye badge has meaning. */

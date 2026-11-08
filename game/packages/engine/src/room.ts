@@ -6,12 +6,14 @@ import { ACTIONS } from './types';
 import type {
   ActionCard,
   Card,
+  CardId,
   InterruptAction,
   InterruptActionIntent,
   InterruptOutcome,
   InterruptState,
   TableCard
 } from './types';
+import { eligibleResponders } from './types';
 
 export const DEFAULT_TURN_SECONDS = 60;
 export const MIN_TURN_SECONDS = 15;
@@ -57,6 +59,10 @@ export type LastInterruptResult = {
   outcome: 'appealed' | 'resolved' | 'expired';
   /** Server timestamp of the resolution; clients key the transient notice on it. */
   resolvedAt: number;
+  /** Number of appeals in the chain (0 = none). Odd => cancelled, even => resolved. */
+  appealDepth: number;
+  /** The decisive / last appealer, or null when the action resolved or expired. */
+  appealedBy: string | null;
   /** Private: the STEAL actor when the stolen card went to their Hand. */
   stolenToHandBy?: string | null;
 };
@@ -85,7 +91,7 @@ export type RoomState = {
   turnNumber: number;
   turnEndsAt: number | null;
   turnRemainingMs: number | null;
-  pendingAction: { actionCard: ActionCard; interrupt: InterruptState } | null;
+  pendingAction: { actionCard: ActionCard; interrupt: InterruptState; appealCards: Card[] } | null;
   lastInterruptResult: LastInterruptResult | null;
   winnerId: string | null;
   /** Card IDs for the three validated sets found at the winning turn, grouped 3×3. */
@@ -197,9 +203,11 @@ function setPublicResult(
   state: RoomState,
   kind: InterruptAction,
   outcome: LastInterruptResult['outcome'],
-  now: number
+  now: number,
+  appealDepth = 0,
+  appealedBy: string | null = null
 ): void {
-  state.lastInterruptResult = { kind, outcome, resolvedAt: now };
+  state.lastInterruptResult = { kind, outcome, resolvedAt: now, appealDepth, appealedBy };
 }
 
 /** Discarded cards are shuffled straight back into the draw deck. */
@@ -289,18 +297,19 @@ function resolvePendingAction(
   state: RoomState,
   outcome: LastInterruptResult['outcome'],
   now: number,
-  appealedCard?: Card
+  appealedBy: string | null = null
 ): void {
   const pending = state.pendingAction;
   if (!pending) return;
   const action = pending.interrupt;
+  const appealDepth = action.appeals.length;
   const remaining = state.turnRemainingMs ?? 0;
   const actor = getPlayer(state, action.actorId);
   const target = getPlayer(state, action.targetId);
   let stolenToHand = false;
+  const chainCards = [pending.actionCard, ...pending.appealCards];
   if (outcome === 'appealed') {
-    if (!appealedCard) throw new Error('An appealed interrupt requires an APPEAL card');
-    discardToDeck(state, [pending.actionCard, appealedCard]);
+    discardToDeck(state, chainCards);
   } else {
     const targetSlotIndex = target?.table.findIndex((slot) => slot.card.id === action.targetCardId) ?? -1;
     const targetSlot = target?.table[targetSlotIndex];
@@ -313,18 +322,16 @@ function resolvePendingAction(
     } else {
       target.table.splice(targetSlotIndex, 1);
       if (actor.table.length >= 9) {
-        // A Hand card has no reveal state and is concealed if placed later.
         actor.hand.push(targetSlot.card);
         stolenToHand = true;
       } else {
-        // Below nine cards, keep the target's reveal state on the Table.
         actor.table.push(targetSlot);
       }
     }
-    discardToDeck(state, [pending.actionCard]);
+    discardToDeck(state, chainCards);
   }
 
-  setPublicResult(state, action.kind, outcome, now);
+  setPublicResult(state, action.kind, outcome, now, appealDepth, appealedBy);
   if (stolenToHand && state.lastInterruptResult) {
     state.lastInterruptResult.stolenToHandBy = action.actorId;
   }
@@ -342,12 +349,54 @@ function resolvePendingAction(
   state.turnEndsAt = now + remaining;
 }
 
-function continueAfterInterrupt(state: RoomState, outcome: InterruptOutcome, now: number, appealCard?: Card): void {
+function continueAfterInterrupt(state: RoomState, outcome: InterruptOutcome, now: number): void {
   if (outcome.status === 'open') {
     state.pendingAction = { ...state.pendingAction!, interrupt: outcome.interrupt };
     return;
   }
-  resolvePendingAction(state, outcome.reason === 'appealed' ? 'appealed' : 'resolved', now, appealCard);
+  finishInterruptChain(state, outcome.reason, now, outcome.appealedBy ?? null);
+}
+
+/**
+ * Resolves a finished interrupt chain. Parity of the appeals played decides the
+ * outcome: odd => cancelled ('appealed'), even (including zero) => resolved.
+ * Expiry with zero appeals => 'expired'.
+ */
+function finishInterruptChain(
+  state: RoomState,
+  reason: 'appealed' | 'all-passed' | 'expired' | 'no-appeal-available',
+  now: number,
+  appealedBy: string | null = null
+): void {
+  const pending = state.pendingAction;
+  if (!pending) return;
+  const appeals = pending.interrupt.appeals;
+  const depth = appeals.length;
+  let outcome: LastInterruptResult['outcome'];
+  let decidedBy: string | null = appealedBy;
+  if (reason === 'appealed') {
+    outcome = 'appealed';
+    decidedBy = appeals[depth - 1]?.playerId ?? null;
+  } else if (reason === 'no-appeal-available') {
+    outcome = 'resolved';
+  } else if (reason === 'all-passed') {
+    if (depth % 2 === 1) {
+      outcome = 'appealed';
+      decidedBy = appeals[depth - 1]?.playerId ?? null;
+    } else {
+      outcome = 'resolved';
+    }
+  } else {
+    if (depth === 0) {
+      outcome = 'expired';
+    } else if (depth % 2 === 1) {
+      outcome = 'appealed';
+      decidedBy = appeals[depth - 1]?.playerId ?? null;
+    } else {
+      outcome = 'resolved';
+    }
+  }
+  resolvePendingAction(state, outcome, now, decidedBy);
 }
 
 function validTimer(seconds: number): boolean {
@@ -668,10 +717,10 @@ function doAction(
   const remaining = Math.max(0, (state.turnEndsAt ?? now) - now);
   state.turnRemainingMs = remaining;
   state.turnEndsAt = null;
-  state.pendingAction = { actionCard, interrupt: { ...action, endsAt: now, responderIds: [], passedIds: [] } };
+  state.pendingAction = { actionCard, interrupt: { ...action, endsAt: now, appeals: [], responderIds: [], passedIds: [] }, appealCards: [] };
   const outcome = openInterrupt(action, state.players, now);
   if (outcome.status === 'resolved') {
-    state.lastInterruptResult = { kind: intent.kind, outcome: 'resolved', resolvedAt: now };
+    state.lastInterruptResult = { kind: intent.kind, outcome: 'resolved', resolvedAt: now, appealDepth: 0, appealedBy: null };
     const result = { status: 'resolved' as const, reason: 'no-appeal-available' as const };
     continueAfterInterrupt(state, result, now);
   } else {
@@ -726,12 +775,19 @@ function resumeGame(state: RoomState, now: number): void {
   if (state.pendingAction && remaining?.interrupt !== null && remaining?.interrupt !== undefined) {
     state.pendingAction.interrupt = { ...state.pendingAction.interrupt, endsAt: now + remaining.interrupt };
   }
-  if (state.activePlayerId !== null) {
+  if (state.activePlayerId !== null && !state.pendingAction) {
     state.turnEndsAt = now + (remaining?.turn ?? state.turnDurationSeconds * 1000);
     state.turnRemainingMs = null;
+  } else if (state.pendingAction && state.pendingAction.interrupt.appeals.length > 0) {
+    // A chain already in flight keeps the turn's remaining time alive while the
+    // current appeal link re-arms its own 30s window. `turnRemainingMs` is kept
+    // so the turn can resume with the correct preserved remainder when the chain ends.
+    state.turnEndsAt = now + (remaining?.turn ?? state.turnRemainingMs ?? 0);
+    state.turnRemainingMs = remaining?.turn ?? state.turnRemainingMs ?? 0;
   } else {
+    // The first interrupt link pauses the turn timer entirely until the chain ends.
     state.turnEndsAt = null;
-    state.turnRemainingMs = remaining?.turn ?? null;
+    state.turnRemainingMs = remaining?.turn ?? state.turnRemainingMs;
   }
   state.paused = false;
   state.pauseRemaining = null;
@@ -880,11 +936,14 @@ export function reduceRoom(state: RoomState, actorId: string, intent: RoomIntent
   if (intent.t === 'appeal' || intent.t === 'pass') {
     const pending = state.pendingAction;
     if (!pending) return { state, error: 'There is no interrupt to respond to' };
-    if (pending.interrupt.endsAt !== null && now >= pending.interrupt.endsAt) return { state, error: 'The interrupt window has ended' };
-    if (!pending.interrupt.responderIds.includes(actorId)) {
+    if (pending.interrupt.endsAt !== null && now >= pending.interrupt.endsAt) {
+      return { state, error: 'The interrupt window has ended' };
+    }
+    const eligible = eligibleResponders(pending.interrupt);
+    if (!eligible.includes(actorId)) {
       return { state, error: 'You are not eligible to respond to this interrupt' };
     }
-    if (pending.interrupt.passedIds.includes(actorId)) {
+    if (pending.interrupt.appeals.length === 0 && pending.interrupt.passedIds.includes(actorId)) {
       return { state, error: 'You have already passed this interrupt' };
     }
     let appealCard: Card | undefined;
@@ -896,16 +955,25 @@ export function reduceRoom(state: RoomState, actorId: string, intent: RoomIntent
       }
       nextPlayer?.hand.splice(handIndex, 1);
     }
-    const result = respondToInterrupt(
-      pending.interrupt,
-      actorId,
-      intent.t,
-      now
-    );
+    const result = respondToInterrupt(pending.interrupt, actorId, intent.t, now, appealCard?.id);
     if (result.status === 'resolved') {
-      resolvePendingAction(next, intent.t === 'appeal' ? 'appealed' : 'resolved', now, appealCard);
+      finishInterruptChain(next, result.reason, now, result.appealedBy ?? null);
     } else {
-      next.pendingAction = { ...pending, interrupt: result.interrupt };
+      // A new link opened. Persist it (with the played appeal card), then
+      // auto-end if the sole next eligible responder holds no APPEAL.
+      next.pendingAction = {
+        ...pending,
+        interrupt: result.interrupt,
+        appealCards: appealCard ? [...pending.appealCards, appealCard] : pending.appealCards
+      };
+      const nextEligible = eligibleResponders(result.interrupt);
+      if (nextEligible.length === 1) {
+        const nextResponder = getPlayer(next, nextEligible[0]);
+        const holdsAppeal = nextResponder?.hand.some((card) => card.kind === 'action' && card.action === 'APPEAL') ?? false;
+        if (!holdsAppeal) {
+          finishInterruptChain(next, 'all-passed', now);
+        }
+      }
     }
     return { state: next };
   }
@@ -1037,7 +1105,7 @@ function resolveExpiredPendingAction(state: RoomState, now: number): void {
   if (!pending || pending.interrupt.endsAt === null || now < pending.interrupt.endsAt) return;
   const expired = expireInterrupt(pending.interrupt, now);
   if (expired.status !== 'resolved') return;
-  resolvePendingAction(state, 'expired', now);
+  finishInterruptChain(state, 'expired', now);
 }
 
 export function processDeadlines(state: RoomState, now: number): DeadlineResult {
@@ -1087,11 +1155,36 @@ export function nextRoomDeadline(state: RoomState): number | null {
 }
 
 export function eligibleAppealIds(interrupt: InterruptState): readonly string[] {
-  return interrupt.responderIds;
+  return eligibleResponders(interrupt);
 }
 
-export function publicInterrupt(interrupt: InterruptState | null): Omit<InterruptState, 'responderIds' | 'passedIds'> | null {
+export type PublicInterrupt = {
+  id: string;
+  kind: InterruptAction;
+  actorId: string;
+  targetId: string;
+  targetCardId: CardId;
+  endsAt: number | null;
+  /** Number of appeals played so far; the public chain-depth indicator. */
+  appealDepth: number;
+  /**
+   * Players who have already played an APPEAL, oldest first. This is public
+   * information once a card is played, and later-link eligibility is derived
+   * from it. It never names who *holds* an unplayed APPEAL.
+   */
+  appealPlayers: string[];
+};
+
+export function publicInterrupt(interrupt: InterruptState | null): PublicInterrupt | null {
   if (!interrupt) return null;
-  const { responderIds: _responders, passedIds: _passed, ...publicFields } = interrupt;
-  return publicFields;
+  return {
+    id: interrupt.id,
+    kind: interrupt.kind,
+    actorId: interrupt.actorId,
+    targetId: interrupt.targetId,
+    targetCardId: interrupt.targetCardId,
+    endsAt: interrupt.endsAt,
+    appealDepth: interrupt.appeals.length,
+    appealPlayers: interrupt.appeals.map((appeal) => appeal.playerId)
+  };
 }

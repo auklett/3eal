@@ -29,6 +29,8 @@ const interruptSchema = z.object({
   targetCardId: z.string().min(1),
   // `null` while the host has the game paused: there is no live deadline then.
   endsAt: z.number().int().nullable(),
+  // Appeals played in this chain, oldest first. Defaulted for older rows.
+  appeals: z.array(z.object({ playerId: z.string().uuid(), cardId: z.string().min(1) })).default([]),
   responderIds: z.array(z.string().uuid()),
   passedIds: z.array(z.string().uuid())
 }).strict();
@@ -68,13 +70,19 @@ export const persistedRoomSchema = z.object({
   turnRemainingMs: z.number().int().nonnegative().nullable(),
   pendingAction: z.object({
     actionCard: actionCardSchema,
-    interrupt: interruptSchema
+    interrupt: interruptSchema,
+    // Appeal cards played in the chain, held out of play until it ends.
+    appealCards: z.array(cardSchema).default([])
   }).strict().nullable(),
   lastInterruptResult: z.object({
     kind: z.enum(['CONCEAL', 'STEAL', 'REVEAL']),
     outcome: z.enum(['appealed', 'resolved', 'expired']),
     // Defaulted for rows written before the transient result notice existed.
     resolvedAt: z.number().int().default(0),
+    // Number of appeals in the chain; defaulted for older rows.
+    appealDepth: z.number().int().nonnegative().default(0),
+    // The decisive / last appealer, or null; defaulted for older rows.
+    appealedBy: z.string().uuid().nullable().default(null),
     // Private STEAL-actor marker; null for every other action and old rows.
     stolenToHandBy: z.string().uuid().nullable().default(null)
   }).strict().nullable(),

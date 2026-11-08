@@ -4,6 +4,7 @@ import {
   addParticipant,
   createRoom,
   DECK_SIZE,
+  eligibleAppealIds,
   leaveRoom,
   nextRoomDeadline,
   processDeadlines,
@@ -82,7 +83,7 @@ function finishedRoom(): RoomState {
   room.turnEndsAt = null;
   room.turnRemainingMs = null;
   room.pendingAction = null;
-  room.lastInterruptResult = { kind: 'STEAL', outcome: 'appealed', resolvedAt: 5000 };
+  room.lastInterruptResult = { kind: 'STEAL', outcome: 'appealed', resolvedAt: 5000, appealDepth: 1, appealedBy: room.players[1].id };
   return room;
 }
 
@@ -196,7 +197,7 @@ describe('room rules', () => {
     expect(passed.state.pendingAction).toBeNull();
     expect(passed.state.players.find((player) => player.id === active.id)?.table[0].revealed).toBe(false);
     expect(passed.state.turnEndsAt).toBe(62_000);
-    expect(passed.state.lastInterruptResult).toEqual({ kind: 'CONCEAL', outcome: 'resolved', resolvedAt: 11_000 });
+    expect(passed.state.lastInterruptResult).toEqual({ kind: 'CONCEAL', outcome: 'resolved', resolvedAt: 11_000, appealDepth: 0, appealedBy: null });
   });
 
   it('preserves a concealed card when stolen and reveals its identity only in authoritative state', () => {
@@ -231,7 +232,7 @@ describe('room rules', () => {
     expect(active.table.at(-1)).toEqual(stolen);
     expect(active.table.at(-1)?.revealed).toBe(false);
     expect(active.hand.some((card) => card.id === stolen.card.id)).toBe(false);
-    expect(room.lastInterruptResult).toEqual({ kind: 'STEAL', outcome: 'resolved', resolvedAt: 1000 });
+    expect(room.lastInterruptResult).toEqual({ kind: 'STEAL', outcome: 'resolved', resolvedAt: 1000, appealDepth: 0, appealedBy: null });
   });
 
   it('sends a steal to Hand when the Table already has exactly nine cards', () => {
@@ -244,6 +245,8 @@ describe('room rules', () => {
       kind: 'STEAL',
       outcome: 'resolved',
       resolvedAt: 1000,
+      appealDepth: 0,
+      appealedBy: null,
       stolenToHandBy: active.id
     });
   });
@@ -266,9 +269,11 @@ describe('room rules', () => {
         targetId: target.id,
         targetCardId: stolen.id,
         endsAt: 1000,
+        appeals: [],
         responderIds: [target.id],
         passedIds: []
-      }
+      },
+      appealCards: []
     };
 
     const result = processDeadlines(room, 1000);
@@ -277,7 +282,7 @@ describe('room rules', () => {
     expect(nextActive?.hand.some((card) => card.id === stolen.id)).toBe(true);
   });
 
-  it('changes nothing when a steal is appealed', () => {
+  it('allows an appeal chain: target appeals, actor counter-appeals, steal resolves', () => {
     const room = startTwoPlayerRoom();
     const active = room.players.find((player) => player.id === room.activePlayerId);
     const target = room.players.find((player) => player.id !== room.activePlayerId);
@@ -294,14 +299,33 @@ describe('room rules', () => {
       slot: 0
     }, 1000);
     if ('error' in opened) throw new Error(opened.error);
+    expect(opened.state.pendingAction).not.toBeNull();
+    expect(opened.state.lastInterruptResult).toBeNull();
+
     const appeal = target.hand.find((card) => card.kind === 'action' && card.action === 'APPEAL');
     if (!appeal) throw new Error('Expected the target to hold APPEAL');
     const appealed = reduceRoom(opened.state, target.id, { t: 'appeal', cardId: appeal.id }, 2000);
     if ('error' in appealed) throw new Error(appealed.error);
-
+    // Depth 1: still open, the actor may counter-appeal.
+    expect(appealed.state.pendingAction).not.toBeNull();
+    expect(appealed.state.lastInterruptResult).toBeNull();
     expect(appealed.state.players.find((player) => player.id === target.id)?.table).toEqual(before);
-    expect(appealed.state.players.find((player) => player.id === active.id)?.table).toHaveLength(9);
-    expect(appealed.state.lastInterruptResult).toEqual({ kind: 'STEAL', outcome: 'appealed', resolvedAt: 2000 });
+
+    const counterAppeal = active.hand.find((card) => card.kind === 'action' && card.action === 'APPEAL');
+    if (!counterAppeal) throw new Error('Expected the actor to hold APPEAL');
+    const resolved = reduceRoom(appealed.state, active.id, { t: 'appeal', cardId: counterAppeal.id }, 3000);
+    if ('error' in resolved) throw new Error(resolved.error);
+    // Depth 2 (even): the steal resolves normally, card moved to actor's Hand.
+    expect(resolved.state.pendingAction).toBeNull();
+    expect(resolved.state.lastInterruptResult).toEqual({
+      kind: 'STEAL',
+      outcome: 'resolved',
+      resolvedAt: 3000,
+      appealDepth: 2,
+      appealedBy: null,
+      stolenToHandBy: 'host'
+    });
+    expect(resolved.state.players.find((player) => player.id === active.id)?.hand.some((card) => card.id === before[0]?.card.id)).toBe(true);
   });
 
   it('is deterministic for the same seed and action sequence', () => {
@@ -695,6 +719,261 @@ describe('room rules', () => {
   });
 });
 
+function clearAppeals(player: RoomState['players'][number]): void {
+  player.hand = player.hand.filter((card) => !(card.kind === 'action' && card.action === 'APPEAL'));
+}
+
+/** Counts every card that exists, including cards held out of play in a chain. */
+function countCards(room: RoomState): number {
+  const held = room.pendingAction ? 1 + room.pendingAction.appealCards.length : 0;
+  return room.deck.length
+    + held
+    + room.players.reduce((sum, player) => sum + player.hand.length + player.table.length, 0);
+}
+
+function startStealChain(): { room: RoomState; activeId: string; targetId: string; targetTable: RoomState['players'][number]['table'] } {
+  const room = startTwoPlayerRoom();
+  const active = room.players.find((player) => player.id === room.activePlayerId);
+  const target = room.players.find((player) => player.id !== room.activePlayerId);
+  if (!active || !target) throw new Error('Expected two players');
+  clearAppeals(active);
+  clearAppeals(target);
+  active.hand.push({ id: 'chain-steal', kind: 'action', action: 'STEAL' });
+  for (let index = 0; index < 8; index += 1) {
+    active.hand.push({ id: `active-appeal-${index}`, kind: 'action', action: 'APPEAL' });
+    target.hand.push({ id: `target-appeal-${index}`, kind: 'action', action: 'APPEAL' });
+  }
+  const targetTable = structuredClone(target.table);
+  const opened = reduceRoom(room, active.id, {
+    t: 'action',
+    cardId: 'chain-steal',
+    kind: 'STEAL',
+    targetId: target.id,
+    slot: 0
+  }, 10_000);
+  if ('error' in opened) throw new Error(opened.error);
+  return { room: opened.state, activeId: active.id, targetId: target.id, targetTable };
+}
+
+function appealFor(room: RoomState, playerId: string, now: number): RoomState {
+  const player = room.players.find((candidate) => candidate.id === playerId);
+  if (!player) throw new Error('Expected the appealing player');
+  const card = player.hand.find((candidate) => candidate.kind === 'action' && candidate.action === 'APPEAL');
+  if (!card) throw new Error('Expected an APPEAL card');
+  const result = reduceRoom(room, playerId, { t: 'appeal', cardId: card.id }, now);
+  if ('error' in result) throw new Error(result.error);
+  return result.state;
+}
+
+function passFor(room: RoomState, playerId: string, now: number): RoomState {
+  const result = reduceRoom(room, playerId, { t: 'pass' }, now);
+  if ('error' in result) throw new Error(result.error);
+  return result.state;
+}
+
+/**
+ * Plays `appeals` alternating links, then has the next eligible player pass.
+ * For a STEAL the target responds on even depth and the actor on odd depth.
+ */
+function runStealChain(appeals: number): {
+  state: RoomState;
+  activeId: string;
+  targetId: string;
+  targetTable: RoomState['players'][number]['table'];
+  cardsBefore: number;
+} {
+  const start = startStealChain();
+  const cardsBefore = countCards(start.room);
+  let state = start.room;
+  let now = 10_000;
+  for (let depth = 0; depth < appeals; depth += 1) {
+    const expectedResponder = depth % 2 === 0 ? start.targetId : start.activeId;
+    const interrupt = state.pendingAction?.interrupt;
+    if (!interrupt) throw new Error('Expected an open interrupt');
+    expect(interrupt.appeals.length).toBe(depth);
+    expect(eligibleAppealIds(interrupt)).toEqual([expectedResponder]);
+    now += 1000;
+    state = appealFor(state, expectedResponder, now);
+    expect(state.pendingAction?.interrupt.endsAt).toBe(now + 30_000);
+    expect(state.turnEndsAt).toBeNull();
+  }
+  const terminalPlayer = appeals % 2 === 0 ? start.targetId : start.activeId;
+  now += 1000;
+  state = passFor(state, terminalPlayer, now);
+  return { state, activeId: start.activeId, targetId: start.targetId, targetTable: start.targetTable, cardsBefore };
+}
+
+describe('appeal chain parity and eligibility', () => {
+  it('alternates eligibility and resolves by appeal parity for every chain length', () => {
+    fc.assert(fc.property(fc.integer({ min: 0, max: 6 }), (appeals) => {
+      const { state, activeId, targetId, targetTable, cardsBefore } = runStealChain(appeals);
+      expect(state.pendingAction).toBeNull();
+      expect(state.lastInterruptResult?.appealDepth).toBe(appeals);
+      expect(state.lastInterruptResult?.outcome).toBe(appeals % 2 === 1 ? 'appealed' : 'resolved');
+      expect(state.lastInterruptResult?.appealedBy).toBe(appeals % 2 === 1 ? targetId : null);
+      const target = state.players.find((player) => player.id === targetId);
+      if (appeals % 2 === 1) {
+        // Odd: the action was cancelled, so the card never left the Table.
+        expect(target?.table).toEqual(targetTable);
+      } else {
+        // Even (including zero): the STEAL resolves.
+        expect(target?.table.some((slot) => slot.card.id === targetTable[0].card.id)).toBe(false);
+        const actor = state.players.find((player) => player.id === activeId);
+        const holder = actor?.table.some((slot) => slot.card.id === targetTable[0].card.id)
+          || actor?.hand.some((card) => card.id === targetTable[0].card.id);
+        expect(holder).toBe(true);
+      }
+      // Every action and APPEAL card returns to the deck once the chain ends.
+      expect(countCards(state)).toBe(cardsBefore);
+      expect(state.deck.some((card) => card.id === 'chain-steal')).toBe(true);
+    }), { numRuns: 7 });
+  });
+
+  it('rejects the player who is not the current link responder', () => {
+    const start = startStealChain();
+    const active = start.room.players.find((player) => player.id === start.activeId);
+    const target = start.room.players.find((player) => player.id === start.targetId);
+    if (!active || !target) throw new Error('Expected two players');
+    const targetAppeal = target.hand.find((card) => card.kind === 'action' && card.action === 'APPEAL');
+    const activeAppeal = active.hand.find((card) => card.kind === 'action' && card.action === 'APPEAL');
+    if (!targetAppeal || !activeAppeal) throw new Error('Expected APPEAL cards');
+
+    // Depth 0 belongs to the target; the actor cannot answer.
+    expect(reduceRoom(start.room, start.activeId, { t: 'appeal', cardId: activeAppeal.id }, 11_000))
+      .toMatchObject({ error: 'You are not eligible to respond to this interrupt' });
+    // Depth 1 belongs to the actor; the target cannot answer again.
+    const linked = appealFor(start.room, start.targetId, 11_000);
+    expect(reduceRoom(linked, start.targetId, { t: 'pass' }, 12_000))
+      .toMatchObject({ error: 'You are not eligible to respond to this interrupt' });
+    // Depth 2 belongs to the first appealer again.
+    const counter = appealFor(linked, start.activeId, 12_000);
+    expect(reduceRoom(counter, start.activeId, { t: 'pass' }, 13_000))
+      .toMatchObject({ error: 'You are not eligible to respond to this interrupt' });
+  });
+
+  it('turns a CONCEAL race into an alternating chain and preserves the first appealer', () => {
+    const room = startRoomWithPlayers(3);
+    const actor = room.players.find((player) => player.id === room.activePlayerId);
+    const opponents = room.players.filter((player) => player.id !== room.activePlayerId);
+    if (!actor || opponents.length !== 2) throw new Error('Expected three players');
+    actor.hand.push({ id: 'race-conceal', kind: 'action', action: 'CONCEAL' });
+    actor.table[0].revealed = true;
+    for (const opponent of opponents) {
+      clearAppeals(opponent);
+      opponent.hand.push({ id: `race-appeal-${opponent.id}`, kind: 'action', action: 'APPEAL' });
+    }
+    const opened = reduceRoom(room, actor.id, {
+      t: 'action',
+      cardId: 'race-conceal',
+      kind: 'CONCEAL',
+      targetId: actor.id,
+      slot: 0
+    }, 10_000);
+    if ('error' in opened) throw new Error(opened.error);
+    expect(opened.state.pendingAction?.interrupt.responderIds).toEqual(opponents.map((player) => player.id));
+
+    const [first, second] = opponents;
+    const linked = appealFor(opened.state, first.id, 11_000);
+    expect(linked.pendingAction?.interrupt.appeals).toEqual([{ playerId: first.id, cardId: `race-appeal-${first.id}` }]);
+    // Once one opponent appeals, only the actor can answer; the other opponent is out.
+    expect(reduceRoom(linked, second.id, { t: 'pass' }, 12_000))
+      .toMatchObject({ error: 'You are not eligible to respond to this interrupt' });
+
+    // Odd depth: the actor passes and the CONCEAL is cancelled.
+    const cancelled = passFor(linked, actor.id, 12_000);
+    expect(cancelled.lastInterruptResult).toMatchObject({
+      kind: 'CONCEAL',
+      outcome: 'appealed',
+      appealDepth: 1,
+      appealedBy: first.id
+    });
+    expect(cancelled.players.find((player) => player.id === actor.id)?.table[0].revealed).toBe(true);
+  });
+
+  it('auto-passes a link when the responder holds no APPEAL', () => {
+    // Odd link: the target appeals, then the actor has no counter-appeal.
+    const odd = startStealChain();
+    const oddActive = odd.room.players.find((player) => player.id === odd.activeId);
+    if (!oddActive) throw new Error('Expected the actor');
+    clearAppeals(oddActive);
+    const oddState = appealFor(odd.room, odd.targetId, 11_000);
+    expect(oddState.pendingAction).toBeNull();
+    expect(oddState.lastInterruptResult).toMatchObject({
+      kind: 'STEAL',
+      outcome: 'appealed',
+      appealDepth: 1,
+      appealedBy: odd.targetId
+    });
+    // The action was cancelled and every chain card returned to the deck.
+    expect(oddState.deck.some((card) => card.id === 'chain-steal')).toBe(true);
+    expect(countCards(oddState)).toBe(countCards(odd.room));
+
+    // Even link: target appeals, actor counters, target has no second APPEAL.
+    const even = startStealChain();
+    const evenActive = even.room.players.find((player) => player.id === even.activeId);
+    const evenTarget = even.room.players.find((player) => player.id === even.targetId);
+    if (!evenActive || !evenTarget) throw new Error('Expected two players');
+    clearAppeals(evenTarget);
+    evenTarget.hand.push({ id: 'only-target-appeal', kind: 'action', action: 'APPEAL' });
+    clearAppeals(evenActive);
+    evenActive.hand.push({ id: 'only-active-appeal', kind: 'action', action: 'APPEAL' });
+    const firstLink = appealFor(even.room, even.targetId, 11_000);
+    const evenState = appealFor(firstLink, even.activeId, 12_000);
+    expect(evenState.pendingAction).toBeNull();
+    expect(evenState.lastInterruptResult).toMatchObject({
+      kind: 'STEAL',
+      outcome: 'resolved',
+      appealDepth: 2,
+      appealedBy: null
+    });
+    expect(evenState.players.find((player) => player.id === even.targetId)?.table
+      .some((slot) => slot.card.id === even.targetTable[0].card.id)).toBe(false);
+  });
+
+  it('applies parity when a chain expires mid-link', () => {
+    for (const appeals of [0, 1, 2]) {
+      const start = startStealChain();
+      let state = start.room;
+      let now = 10_000;
+      for (let depth = 0; depth < appeals; depth += 1) {
+        const responder = depth % 2 === 0 ? start.targetId : start.activeId;
+        now += 1000;
+        state = appealFor(state, responder, now);
+      }
+      const endsAt = state.pendingAction?.interrupt.endsAt;
+      if (endsAt === null || endsAt === undefined) throw new Error('Expected a live deadline');
+      state = processDeadlines(state, endsAt).state;
+      expect(state.pendingAction).toBeNull();
+      expect(state.lastInterruptResult?.appealDepth).toBe(appeals);
+      if (appeals === 0) {
+        expect(state.lastInterruptResult?.outcome).toBe('expired');
+        expect(state.lastInterruptResult?.appealedBy).toBeNull();
+        // A timed-out action still resolves after its 30 seconds.
+        expect(state.players.find((player) => player.id === start.targetId)?.table
+          .some((slot) => slot.card.id === start.targetTable[0].card.id)).toBe(false);
+      } else if (appeals % 2 === 1) {
+        expect(state.lastInterruptResult?.outcome).toBe('appealed');
+        expect(state.lastInterruptResult?.appealedBy).toBe(start.targetId);
+        expect(state.players.find((player) => player.id === start.targetId)?.table).toEqual(start.targetTable);
+      } else {
+        expect(state.lastInterruptResult?.outcome).toBe('resolved');
+        expect(state.lastInterruptResult?.appealedBy).toBeNull();
+        expect(state.players.find((player) => player.id === start.targetId)?.table
+          .some((slot) => slot.card.id === start.targetTable[0].card.id)).toBe(false);
+      }
+    }
+  });
+
+  it('keeps the turn paused through every link and is deterministic for the same sequence', () => {
+    const first = runStealChain(4);
+    const second = runStealChain(4);
+    expect(first.state).toEqual(second.state);
+    const active = first.state.players.find((player) => player.id === first.activeId);
+    expect(active).toBeDefined();
+    expect(first.state.turnEndsAt).toBe(10_000 + 4 * 1000 + 1000 + 51_000);
+  });
+});
+
 function interruptRoom(): RoomState {
   const room = startTwoPlayerRoom();
   const active = room.players.find((player) => player.id === room.activePlayerId);
@@ -713,6 +992,83 @@ function interruptRoom(): RoomState {
   if ('error' in action) throw new Error(action.error);
   return action.state;
 }
+
+describe('interrupt response validation', () => {
+  it('rejects late responses and resolves based on appeal parity once the link expires', () => {
+    const start = startStealChain();
+    const target = start.room.players.find((player) => player.id === start.targetId);
+    const active = start.room.players.find((player) => player.id === start.activeId);
+    if (!target || !active) throw new Error('Expected two players');
+
+    const linked = appealFor(start.room, start.targetId, 11_000);
+    const current = linked.pendingAction?.interrupt;
+    if (!current || current.endsAt === null) throw new Error('Expected a live interrupt');
+    const before = structuredClone(linked);
+    const late = reduceRoom(linked, start.activeId, { t: 'pass' }, current.endsAt + 1);
+    expect(late).toMatchObject({ error: 'The interrupt window has ended' });
+    expect(late.state).toEqual(before);
+
+    const expired = processDeadlines(linked, current.endsAt + 1).state;
+    expect(expired.pendingAction).toBeNull();
+    expect(expired.lastInterruptResult).toMatchObject({
+      kind: 'STEAL',
+      outcome: 'appealed',
+      appealDepth: 1,
+      appealedBy: start.targetId
+    });
+  });
+
+  it('rejects out-of-turn responses without changing state or ending the chain', () => {
+    const start = startStealChain();
+    const active = start.room.players.find((player) => player.id === start.activeId);
+    const target = start.room.players.find((player) => player.id === start.targetId);
+    if (!active || !target) throw new Error('Expected two players');
+    const targetAppeal = target.hand.find((card) => card.kind === 'action' && card.action === 'APPEAL');
+    const activeAppeal = active.hand.find((card) => card.kind === 'action' && card.action === 'APPEAL');
+    if (!targetAppeal || !activeAppeal) throw new Error('Expected APPEAL cards');
+
+    const linked = appealFor(start.room, start.targetId, 11_000);
+    const before = structuredClone(linked);
+    const wrong = reduceRoom(linked, start.targetId, { t: 'pass' }, 12_000);
+    expect(wrong).toMatchObject({ error: 'You are not eligible to respond to this interrupt' });
+    expect(wrong.state).toEqual(before);
+    expect(linked.pendingAction).not.toBeNull();
+
+    const validCounter = reduceRoom(linked, start.activeId, { t: 'appeal', cardId: activeAppeal.id }, 12_000);
+    if ('error' in validCounter) throw new Error(validCounter.error);
+    expect(validCounter.state.pendingAction).not.toBeNull();
+  });
+
+  it('rejects duplicate and post-resolution appeal or pass messages cleanly', () => {
+    const room = interruptRoom();
+    const opponent = room.players.find((player) => player.id !== room.activePlayerId);
+    if (!opponent) throw new Error('Expected an opponent');
+    const before = structuredClone(room);
+
+    const firstPass = reduceRoom(room, opponent.id, { t: 'pass' }, 11_000);
+    if ('error' in firstPass) throw new Error(firstPass.error);
+    expect(firstPass.state.pendingAction).toBeNull();
+
+    const duplicatePass = reduceRoom(firstPass.state, opponent.id, { t: 'pass' }, 12_000);
+    expect(duplicatePass).toMatchObject({ error: 'There is no interrupt to respond to' });
+    expect(duplicatePass.state).toEqual(firstPass.state);
+
+    const duplicateAppeal = reduceRoom(firstPass.state, opponent.id, { t: 'appeal', cardId: 'unused' }, 12_000);
+    expect(duplicateAppeal).toMatchObject({ error: 'There is no interrupt to respond to' });
+    expect(duplicateAppeal.state).toEqual(firstPass.state);
+
+    const unresolved = startStealChain();
+    const unresolvedBefore = structuredClone(unresolved.room);
+    const stillOpen = reduceRoom(unresolved.room, unresolved.targetId, { t: 'pass' }, 11_000);
+    if ('error' in stillOpen) throw new Error(stillOpen.error);
+    expect(stillOpen.state.pendingAction).toBeNull();
+    const duplicateEarly = reduceRoom(stillOpen.state, unresolved.targetId, { t: 'pass' }, 12_000);
+    expect(duplicateEarly).toMatchObject({ error: 'There is no interrupt to respond to' });
+    expect(duplicateEarly.state).toEqual(stillOpen.state);
+    expect(before).toEqual(room);
+    expect(unresolvedBefore).toEqual(unresolved.room);
+  });
+});
 
 describe('host pause and resume', () => {
   it('only allows the host to pause and resume during play', () => {
@@ -770,8 +1126,78 @@ describe('host pause and resume', () => {
     const resumed = reduceRoom(paused.state, room.hostId, { t: 'resume' }, 100_000);
     if ('error' in resumed) throw new Error(resumed.error);
     expect(resumed.state.pendingAction?.interrupt.endsAt).toBe(120_000);
-    expect(resumed.state.turnEndsAt).toBe(151_000);
+    // The turn clock stays paused for the whole interrupt, even after resume.
+    expect(resumed.state.turnEndsAt).toBeNull();
+    expect(resumed.state.turnRemainingMs).toBe(51_000);
     expect(nextRoomDeadline(resumed.state)).toBe(120_000);
+
+    // Ending the chain restarts the turn with its preserved remaining time.
+    const passed = reduceRoom(resumed.state, room.players.find((player) => player.id !== room.activePlayerId)!.id, { t: 'pass' }, 119_000);
+    if ('error' in passed) throw new Error(passed.error);
+    expect(passed.state.pendingAction).toBeNull();
+    expect(passed.state.turnEndsAt).toBe(170_000);
+  });
+
+  it('freezes and re-arms a later appeal link so the chain can continue after resume', () => {
+    const start = startStealChain();
+    const linked = appealFor(start.room, start.targetId, 11_000);
+    expect(linked.pendingAction?.interrupt.appeals).toHaveLength(1);
+    expect(linked.pendingAction?.interrupt.endsAt).toBe(41_000);
+
+    const paused = reduceRoom(linked, linked.hostId, { t: 'pause' }, 21_000);
+    if ('error' in paused) throw new Error(paused.error);
+    expect(paused.state.pendingAction?.interrupt.endsAt).toBeNull();
+    expect(paused.state.pauseRemaining).toMatchObject({ turn: 51_000, interrupt: 20_000 });
+    expect(nextRoomDeadline(paused.state)).toBeNull();
+
+    const frozen = processDeadlines(paused.state, 10_000_000).state;
+    expect(frozen.pendingAction?.interrupt.appeals).toHaveLength(1);
+    expect(frozen.pendingAction?.interrupt.endsAt).toBeNull();
+
+    const resumed = reduceRoom(paused.state, linked.hostId, { t: 'resume' }, 100_000);
+    if ('error' in resumed) throw new Error(resumed.error);
+    expect(resumed.state.pendingAction?.interrupt.endsAt).toBe(120_000);
+    expect(resumed.state.turnEndsAt).toBe(151_000);
+    // The earliest deadline is the current appeal link, not the turn.
+    expect(nextRoomDeadline(resumed.state)).toBe(120_000);
+
+    // The chain still alternates after resume: the actor may counter-appeal.
+    expect(eligibleAppealIds(resumed.state.pendingAction!.interrupt)).toEqual([start.activeId]);
+  });
+
+  it('preserves turnRemainingMs and recomputes each interrupt link on pause/resume across links 1, 2, and 3+', () => {
+    for (const targetDepth of [1, 2, 3]) {
+      let state = startStealChain().room;
+      let now = 10_000;
+      const start = startStealChain();
+      state = start.room;
+      const activeId = start.activeId;
+      const targetId = start.targetId;
+      for (let depth = 0; depth < targetDepth; depth += 1) {
+        const responder = depth % 2 === 0 ? targetId : activeId;
+        now += 1000;
+        state = appealFor(state, responder, now);
+      }
+      const interrupt = state.pendingAction?.interrupt;
+      if (!interrupt || interrupt.endsAt === null) throw new Error('Expected a live interrupt');
+      const pauseNow = interrupt.endsAt - 10_000;
+      const paused = reduceRoom(state, state.hostId, { t: 'pause' }, pauseNow);
+      if ('error' in paused) throw new Error(paused.error);
+      expect(paused.state.turnRemainingMs).toBe(51_000);
+      expect(paused.state.pendingAction?.interrupt.endsAt).toBeNull();
+      expect(paused.state.pauseRemaining).toMatchObject({ interrupt: 10_000, turn: 51_000 });
+      expect(nextRoomDeadline(paused.state)).toBeNull();
+
+      expect(reduceRoom(paused.state, activeId, { t: 'pass' }, pauseNow + 5000)).toMatchObject({ error: 'Game is paused' });
+      expect(reduceRoom(paused.state, targetId, { t: 'appeal', cardId: 'unused' }, pauseNow + 5000)).toMatchObject({ error: 'Game is paused' });
+
+      const resumed = reduceRoom(paused.state, state.hostId, { t: 'resume' }, 100_000);
+      if ('error' in resumed) throw new Error(resumed.error);
+      expect(resumed.state.turnRemainingMs).toBe(51_000);
+      expect(resumed.state.pendingAction?.interrupt.endsAt).toBe(110_000);
+      expect(nextRoomDeadline(resumed.state)).toBe(110_000);
+      expect(resumed.state.pauseRemaining).toBeNull();
+    }
   });
 
   it('rejects every game action while paused but allows host management', () => {
